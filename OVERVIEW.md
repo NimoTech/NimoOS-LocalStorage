@@ -1,6 +1,6 @@
-# CasaOS-LocalStorage 详解
+# NimoOS-LocalStorage 详解
 
-CasaOS-LocalStorage 是负责本地磁盘和存储管理的微服务，提供磁盘发现、挂载管理、虚拟合并卷（MergerFS）和 USB 自动挂载等能力。
+NimoOS-LocalStorage 是负责本地磁盘和存储管理的微服务，提供磁盘发现、挂载管理、虚拟合并卷（MergerFS）和 USB 自动挂载等能力。
 
 ---
 
@@ -19,7 +19,7 @@ CasaOS-LocalStorage 是负责本地磁盘和存储管理的微服务，提供磁
 ## 目录结构
 
 ```
-CasaOS-LocalStorage/
+NimoOS-LocalStorage/
 ├── main.go                  # 启动入口，udev 事件监听，定时状态上报
 ├── misc.go                  # 事件发布辅助函数
 ├── api/                     # OpenAPI 规范（V2）
@@ -136,7 +136,7 @@ POST /v2/local_storage/mount
 ### 持久化策略（三层）
 
 1. **内存**：运行时挂载信息
-2. **数据库**：CasaOS 管理的挂载记录（`o_disk`、`o_merge` 表）
+2. **数据库**：NimoOS 管理的挂载记录（`o_disk`、`o_merge` 表）
 3. **fstab**：系统级持久化（`/etc/fstab`，可选）
 
 ---
@@ -186,12 +186,12 @@ CREATE TABLE o_merge_disk (
 
 ```ini
 [common]
-RuntimePath = /var/run/casaos
+RuntimePath = /var/run/nimoos
 
 [app]
-LogPath = /var/log/casaos
-DBPath = /var/lib/casaos/db
-ShellPath = /usr/share/casaos/shell
+LogPath = /var/log/nimoos
+DBPath = /var/lib/nimoos/db
+ShellPath = /usr/share/nimoos/shell
 
 [server]
 USBAutoMount = True

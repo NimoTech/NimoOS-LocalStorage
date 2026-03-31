@@ -2,9 +2,9 @@
  *@Date: 2021-12-07 17:14:41
  *@LastEditors: LinkLeong
  *@LastEditTime: 2022-08-17 18:46:43
- *@FilePath: /CasaOS/service/model/o_disk.go
+ *@FilePath: /NimoOS/service/model/o_disk.go
  *@Description:
- *@Website: https://www.casaos.io
+ *@Website: https://www.nimoos.io
  *Copyright (c) 2022 by icewhale, All Rights Reserved.
  */
 package model

@@ -197,4 +197,4 @@ require (
 	storj.io/uplink v1.10.0 // indirect
 )
 
-replace github.com/NimoTech/NimoOS-Common => ../CasaOS-Common
+replace github.com/NimoTech/NimoOS-Common => ../NimoOS-Common

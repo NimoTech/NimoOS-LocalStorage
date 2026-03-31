@@ -20,7 +20,7 @@ var (
 		LogPath:     constants.DefaultLogPath,
 		LogSaveName: "local-storage",
 		LogFileExt:  "log",
-		ShellPath:   "/usr/share/casaos/shell",
+		ShellPath:   "/usr/share/nimoos/shell",
 	}
 
 	ServerInfo = &model.ServerModel{

@@ -8,10 +8,10 @@ permissions:
   contents: write
 jobs:
   call-workflow-passing-data:
-    uses: IceWhaleTech/github/.github/workflows/go_release.yml@main
+    uses: NimoTech/github/.github/workflows/go_release.yml@main
     with:
-      project-name: CasaOS-LocalStorage
-      file-name: casaos-local-storage
+      project-name: NimoOS-LocalStorage
+      file-name: nimoos-local-storage
     secrets:
       OSS_KEY_ID: ${{ secrets.OSS_KEY_ID }}
       OSS_KEY_SECRET: ${{ secrets.OSS_KEY_SECRET }}

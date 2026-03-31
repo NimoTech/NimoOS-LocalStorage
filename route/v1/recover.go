@@ -28,7 +28,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Code cannot be empty"
 			logger.Error("Then code is empty: ", zap.String("code", add.Code), zap.Any("name", "google_drive"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 
 		add.RootFolderID = "root"
@@ -43,7 +43,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Initialization failure"
 			logger.Error("Then init error: ", zap.Error(err), zap.Any("name", "google_drive"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 
 		username, err := google_drive.GetUserInfo(ctx.Request().Context())
@@ -52,7 +52,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Failed to get user information"
 			logger.Error("Then get user info error: ", zap.Error(err), zap.Any("name", "google_drive"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 		dmap := make(map[string]interface{})
 		dmap["username"] = username
@@ -62,7 +62,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Failed to get rclone config"
 			logger.Error("Then get config error: ", zap.Error(err), zap.Any("name", "google_drive"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 		for _, v := range configs.Remotes {
 			t := service.MyService.Storage().GetAttributeValueByName(v, "type")
@@ -79,7 +79,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 				}
 				notify["status"] = "warn"
 				notify["message"] = "The same configuration has been added"
-				service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+				service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 			}
 		}
 		if len(username) > 0 {
@@ -101,7 +101,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 		notify["status"] = "success"
 		notify["message"] = "Success"
 		notify["driver"] = "GoogleDrive"
-		fmt.Println(service.MyService.Notify().SendNotify("casaos:file:recover", notify))
+		fmt.Println(service.MyService.Notify().SendNotify("nimoos:file:recover", notify))
 	} else if t == "Dropbox" {
 		add := dropbox.Addition{}
 		add.Code = ctx.QueryParam("code")
@@ -110,7 +110,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Code cannot be empty"
 			logger.Error("Then code is empty error: ", zap.String("code", add.Code), zap.Any("name", "dropbox"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 		add.RootFolderID = ""
 		add.AppKey = dropbox.APPKEY
@@ -123,7 +123,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Initialization failure"
 			logger.Error("Then init error: ", zap.Error(err), zap.Any("name", "dropbox"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 		username, err := dropbox.GetUserInfo(ctx.Request().Context())
 		if err != nil {
@@ -131,7 +131,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Failed to get user information"
 			logger.Error("Then get user information: ", zap.Error(err), zap.Any("name", "dropbox"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 		dmap := make(map[string]interface{})
 		dmap["username"] = username
@@ -142,7 +142,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 			notify["status"] = "fail"
 			notify["message"] = "Failed to get rclone config"
 			logger.Error("Then get config error: ", zap.Error(err), zap.Any("name", "dropbox"))
-			service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+			service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 		}
 		for _, v := range configs.Remotes {
 
@@ -161,7 +161,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 
 				notify["status"] = "warn"
 				notify["message"] = "The same configuration has been added"
-				service.MyService.Notify().SendNotify("casaos:file:recover", notify)
+				service.MyService.Notify().SendNotify("nimoos:file:recover", notify)
 			}
 		}
 		if len(username) > 0 {
@@ -192,7 +192,7 @@ func GetRecoverStorage(ctx echo.Context) error {
 		notify["status"] = "success"
 		notify["message"] = "Success"
 		notify["driver"] = "Dropbox"
-		fmt.Println(service.MyService.Notify().SendNotify("casaos:file:recover", notify))
+		fmt.Println(service.MyService.Notify().SendNotify("nimoos:file:recover", notify))
 
 	}
 

@@ -1,13 +1,13 @@
 # Maintainer: Ns2Kracy <2220496937@qq.com>
-pkgname=casaos-local-storage
+pkgname=nimoos-local-storage
 pkgver=0.4.0
 pkgrel=1
-pkgdesc="Local Storage service provides local storage and disk management functionalities to CasaOS."
+pkgdesc="Local Storage service provides local storage and disk management functionalities to NimoOS."
 arch=('x86_64' 'aarch64' 'armv7h')
-url="https://github.com/IceWhaleTech/CasaOS-LocalStorage"
+url="https://github.com/NimoTech/NimoOS-LocalStorage"
 license=('APACHE')
-groups=('casaos')
-backup=('etc/casaos/local-storage.conf')
+groups=('nimoos')
+backup=('etc/nimoos/local-storage.conf')
 source_x86_64=(
 	${url}/releases/download/v${pkgver}/linux-amd64-${pkgname}-v${pkgver}.tar.gz
     ${url}/releases/download/v${pkgver}/linux-amd64-${pkgname}-migration-tool-v${pkgver}.tar.gz
@@ -37,6 +37,6 @@ package() {
 	_name="${pkgname#*-}"
 	install -Dm755 "${_sysdir}/usr/bin/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
 	install -Dm755 "${_sysdir}/usr/bin/${pkgname}-migration-tool" "${pkgdir}/usr/bin/${pkgname}-migration-tool"
-	install -Dm644 "${_sysdir}/etc/casaos/${_name}.conf.sample" "${pkgdir}/etc/casaos/${_name}.conf"
+	install -Dm644 "${_sysdir}/etc/nimoos/${_name}.conf.sample" "${pkgdir}/etc/nimoos/${_name}.conf"
 	install -Dm644 "${_sysdir}/usr/lib/systemd/system/${pkgname}.service" "${pkgdir}/usr/lib/systemd/system/${pkgname}.service"
 }

@@ -1,4 +1,4 @@
-# DISABLED: This workflow requires ZeroTier/SSH secrets from IceWhaleTech infra.
+# DISABLED: This workflow requires ZeroTier/SSH secrets from NimoTech infra.
 # Kept for reference. To re-enable, remove the 'if: false' lines and configure secrets.
 name: Auto Publish Website
 on:
@@ -9,9 +9,9 @@ permissions:
   contents: write
 jobs:
   call-workflow-passing-data:
-    uses: IceWhaleTech/github/.github/workflows/push_test_server.yml@main
+    uses: NimoTech/github/.github/workflows/push_test_server.yml@main
     with:
-      project-name: casaos-local-storage
+      project-name: nimoos-local-storage
     secrets:
       ZEROTIER_NETWORK_ID: ${{ secrets.ZEROTIER_NETWORK_ID }}
       ZEROTIER_CENTRAL_TOKEN: ${{ secrets.ZEROTIER_CENTRAL_TOKEN }}
