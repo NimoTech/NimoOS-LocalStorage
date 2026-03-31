@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/internal/conf"
+	"github.com/NimoTech/NimoOS-LocalStorage/internal/conf"
 
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/internal/driver"
+	"github.com/NimoTech/NimoOS-LocalStorage/internal/driver"
 	"github.com/pkg/errors"
 )
 

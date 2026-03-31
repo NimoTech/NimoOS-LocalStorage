@@ -1,9 +1,9 @@
 package v1
 
 import (
-	"github.com/IceWhaleTech/CasaOS-Common/model"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/common_err"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/internal/op"
+	"github.com/NimoTech/NimoOS-Common/model"
+	"github.com/NimoTech/NimoOS-Common/utils/common_err"
+	"github.com/NimoTech/NimoOS-LocalStorage/internal/op"
 	"github.com/labstack/echo/v4"
 )
 

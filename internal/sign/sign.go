@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/sign"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/sign"
 )
 
 var once sync.Once

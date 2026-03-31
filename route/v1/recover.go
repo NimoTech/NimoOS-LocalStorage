@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/drivers/dropbox"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/drivers/google_drive"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/service"
+	"github.com/NimoTech/NimoOS-Common/utils/logger"
+	"github.com/NimoTech/NimoOS-LocalStorage/drivers/dropbox"
+	"github.com/NimoTech/NimoOS-LocalStorage/drivers/google_drive"
+	"github.com/NimoTech/NimoOS-LocalStorage/service"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 )

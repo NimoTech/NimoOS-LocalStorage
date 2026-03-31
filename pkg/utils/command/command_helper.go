@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"time"
 
-	exec2 "github.com/IceWhaleTech/CasaOS-Common/utils/exec"
+	exec2 "github.com/NimoTech/NimoOS-Common/utils/exec"
 )
 
 // exec smart

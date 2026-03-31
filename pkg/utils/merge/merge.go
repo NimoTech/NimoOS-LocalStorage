@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
+	"github.com/NimoTech/NimoOS-Common/utils/logger"
 	"go.uber.org/zap"
 )
 
