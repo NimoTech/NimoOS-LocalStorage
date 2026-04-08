@@ -24,7 +24,6 @@ import (
 	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/cache"
 	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/config"
 	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/sqlite"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/utils/merge"
 	"github.com/IceWhaleTech/CasaOS-LocalStorage/route"
 	"github.com/IceWhaleTech/CasaOS-LocalStorage/service"
 	"github.com/coreos/go-systemd/daemon"
@@ -83,23 +82,6 @@ func init() {
 		service.MyService.Disk().CheckSerialDiskMount()
 		os.Exit(0)
 		return
-	}
-	if strings.ToLower(config.ServerInfo.EnableMergerFS) == "true" {
-		if !merge.IsMergerFSInstalled() {
-			config.ServerInfo.EnableMergerFS = "false"
-			logger.Info("mergerfs is disabled")
-		}
-	}
-
-	if strings.ToLower(config.ServerInfo.EnableMergerFS) == "true" {
-		if !service.MyService.Disk().EnsureDefaultMergePoint() {
-			config.ServerInfo.EnableMergerFS = "false"
-			logger.Info("mergerfs is disabled")
-		}
-	}
-
-	if strings.ToLower(config.ServerInfo.EnableMergerFS) == "true" {
-		go service.MyService.LocalStorage().CheckMergeMount()
 	}
 
 	checkToken2_11()
@@ -227,7 +209,6 @@ func RegMsg() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var events []message_bus.EventType
-	events = append(events, message_bus.EventType{Name: common.ServiceName + ":merge_status", SourceID: common.ServiceName, PropertyTypeList: []message_bus.PropertyType{}})
 	events = append(events, message_bus.EventType{Name: common.ServiceName + ":storage_status", SourceID: common.ServiceName, PropertyTypeList: []message_bus.PropertyType{}})
 	// register at message bus
 	for i := 0; i < 10; i++ {
