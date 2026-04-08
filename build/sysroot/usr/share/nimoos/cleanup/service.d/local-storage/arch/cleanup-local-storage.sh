@@ -3,12 +3,12 @@
 set -e
 
 readonly CASA_SERVICES=(
-    "casaos-local-storage.service"
+    "nimoos-local-storage.service"
 )
 
-readonly CASA_EXEC=casaos-local-storage
-readonly CASA_CONF=/etc/casaos/local-storage.conf
-readonly CASA_DB=/var/lib/casaos/db/local-storage.db
+readonly CASA_EXEC=nimoos-local-storage
+readonly CASA_CONF=/etc/nimoos/local-storage.conf
+readonly CASA_DB=/var/lib/nimoos/db/local-storage.db
 
 readonly aCOLOUR=(
     '\e[38;5;154m' # green  	| Lines, bullets and separators

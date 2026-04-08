@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/drivers/base"
+	"github.com/NimoTech/NimoOS-Common/utils/logger"
+	"github.com/NimoTech/NimoOS-LocalStorage/drivers/base"
 	"github.com/go-resty/resty/v2"
 	"go.uber.org/zap"
 )
@@ -19,7 +19,7 @@ func (d *Dropbox) getRefreshToken() error {
 		SetFormData(map[string]string{
 			"code":         d.Code,
 			"grant_type":   "authorization_code",
-			"redirect_uri": "https://cloudoauth.files.casaos.app",
+			"redirect_uri": "https://cloudoauth.files.nimoos.app",
 		}).SetBasicAuth(d.Addition.AppKey, d.Addition.AppSecret).SetHeader("Content-Type", "application/x-www-form-urlencoded").Post(url)
 	if err != nil {
 		return err

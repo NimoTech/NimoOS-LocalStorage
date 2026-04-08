@@ -1,0 +1,14 @@
+[Unit]
+After=nimoos-gateway.service
+After=nimoos-message-bus.service
+Description=NimoOS Local Storage Service
+
+[Service]
+ExecStartPre=/usr/bin/nimoos-local-storage -v
+ExecStart=/usr/bin/nimoos-local-storage -c /etc/nimoos/local-storage.conf
+PIDFile=/var/run/nimoos/local-storage.pid
+Restart=always
+Type=notify
+
+[Install]
+WantedBy=multi-user.target

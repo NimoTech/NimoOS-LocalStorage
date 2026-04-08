@@ -1,11 +1,11 @@
 package service
 
 import (
-	"github.com/IceWhaleTech/CasaOS-Common/external"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/codegen/message_bus"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/config"
-	v2 "github.com/IceWhaleTech/CasaOS-LocalStorage/service/v2"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/service/v2/wrapper"
+	"github.com/NimoTech/NimoOS-Common/external"
+	"github.com/NimoTech/NimoOS-LocalStorage/codegen/message_bus"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/config"
+	v2 "github.com/NimoTech/NimoOS-LocalStorage/service/v2"
+	"github.com/NimoTech/NimoOS-LocalStorage/service/v2/wrapper"
 	"github.com/patrickmn/go-cache"
 	"gorm.io/gorm"
 )

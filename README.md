@@ -1,8 +1,8 @@
-# CasaOS-LocalStorage
+# NimoOS-LocalStorage
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/IceWhaleTech/CasaOS-LocalStorage.svg)](https://pkg.go.dev/github.com/IceWhaleTech/CasaOS-LocalStorage) [![Go Report Card](https://goreportcard.com/badge/github.com/IceWhaleTech/CasaOS-LocalStorage)](https://goreportcard.com/report/github.com/IceWhaleTech/CasaOS-LocalStorage) [![goreleaser](https://github.com/IceWhaleTech/CasaOS-LocalStorage/actions/workflows/release.yml/badge.svg)](https://github.com/IceWhaleTech/CasaOS-LocalStorage/actions/workflows/release.yml) [![codecov](https://codecov.io/gh/IceWhaleTech/CasaOS-LocalStorage/branch/main/graph/badge.svg?token=GKFBMQ3157)](https://codecov.io/gh/IceWhaleTech/CasaOS-LocalStorage)
+[![Go Reference](https://pkg.go.dev/badge/github.com/NimoTech/NimoOS-LocalStorage.svg)](https://pkg.go.dev/github.com/NimoTech/NimoOS-LocalStorage) [![Go Report Card](https://goreportcard.com/badge/github.com/NimoTech/NimoOS-LocalStorage)](https://goreportcard.com/report/github.com/NimoTech/NimoOS-LocalStorage) [![goreleaser](https://github.com/NimoTech/NimoOS-LocalStorage/actions/workflows/release.yml/badge.svg)](https://github.com/NimoTech/NimoOS-LocalStorage/actions/workflows/release.yml) [![codecov](https://codecov.io/gh/NimoTech/NimoOS-LocalStorage/branch/main/graph/badge.svg?token=GKFBMQ3157)](https://codecov.io/gh/NimoTech/NimoOS-LocalStorage)
 
-Local Storage service provides local storage and disk management functionalities to CasaOS.
+Local Storage service provides local storage and disk management functionalities to NimoOS.
 
 
 

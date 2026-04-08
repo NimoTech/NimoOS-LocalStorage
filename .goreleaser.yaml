@@ -1,14 +1,14 @@
 # This is an example .goreleaser.yml file with some sensible defaults.
 # Make sure to check the documentation at https://goreleaser.com
-project_name: casaos-local-storage
+project_name: nimoos-local-storage
 before:
   hooks:
     - go generate
     - go mod tidy
     - go test -race -v ./...
 builds:
-  - id: casaos-local-storage-amd64
-    binary: build/sysroot/usr/bin/casaos-local-storage
+  - id: nimoos-local-storage-amd64
+    binary: build/sysroot/usr/bin/nimoos-local-storage
     hooks:
       post:
         - upx --best --lzma -v --no-progress "{{ .Path }}"
@@ -28,8 +28,8 @@ builds:
       - linux
     goarch:
       - amd64
-  - id: casaos-local-storage-arm64
-    binary: build/sysroot/usr/bin/casaos-local-storage
+  - id: nimoos-local-storage-arm64
+    binary: build/sysroot/usr/bin/nimoos-local-storage
     # hooks:
     #   post:
     #     - upx --best --lzma -v --no-progress "{{ .Path }}"
@@ -49,8 +49,8 @@ builds:
       - linux
     goarch:
       - arm64
-  - id: casaos-local-storage-arm-7
-    binary: build/sysroot/usr/bin/casaos-local-storage
+  - id: nimoos-local-storage-arm-7
+    binary: build/sysroot/usr/bin/nimoos-local-storage
     hooks:
       post:
         - upx --best --lzma -v --no-progress "{{ .Path }}"
@@ -72,8 +72,8 @@ builds:
       - arm
     goarm:
       - "7"
-  - id: casaos-local-storage-riscv64
-    binary: build/sysroot/usr/bin/casaos-local-storage
+  - id: nimoos-local-storage-riscv64
+    binary: build/sysroot/usr/bin/nimoos-local-storage
     env:
       - CC=riscv64-linux-gnu-gcc
     ldflags:
@@ -90,8 +90,8 @@ builds:
       - linux
     goarch:
       - riscv64
-  - id: casaos-local-storage-migration-tool-amd64
-    binary: build/sysroot/usr/bin/casaos-local-storage-migration-tool
+  - id: nimoos-local-storage-migration-tool-amd64
+    binary: build/sysroot/usr/bin/nimoos-local-storage-migration-tool
     hooks:
       post:
         - upx --best --lzma -v --no-progress "{{ .Path }}"
@@ -112,8 +112,8 @@ builds:
       - linux
     goarch:
       - amd64
-  - id: casaos-local-storage-migration-tool-arm64
-    binary: build/sysroot/usr/bin/casaos-local-storage-migration-tool
+  - id: nimoos-local-storage-migration-tool-arm64
+    binary: build/sysroot/usr/bin/nimoos-local-storage-migration-tool
     # hooks:
     #   post:
     #     - upx --best --lzma -v --no-progress "{{ .Path }}"
@@ -134,8 +134,8 @@ builds:
       - linux
     goarch:
       - arm64
-  - id: casaos-local-storage-migration-tool-arm-7
-    binary: build/sysroot/usr/bin/casaos-local-storage-migration-tool
+  - id: nimoos-local-storage-migration-tool-arm-7
+    binary: build/sysroot/usr/bin/nimoos-local-storage-migration-tool
     hooks:
       post:
         - upx --best --lzma -v --no-progress "{{ .Path }}"
@@ -158,8 +158,8 @@ builds:
       - arm
     goarm:
       - "7"
-  - id: casaos-local-storage-migration-tool-riscv64
-    binary: build/sysroot/usr/bin/casaos-local-storage-migration-tool
+  - id: nimoos-local-storage-migration-tool-riscv64
+    binary: build/sysroot/usr/bin/nimoos-local-storage-migration-tool
     main: ./cmd/migration-tool
     env:
       - CC=riscv64-linux-gnu-gcc
@@ -180,22 +180,22 @@ builds:
 archives:
   - name_template: >-
       {{ .Os }}-{{- if eq .Arch "arm" }}arm-7{{- else }}{{ .Arch }}{{- end }}-{{ .ProjectName }}-v{{ .Version }}
-    id: casaos-local-storage
+    id: nimoos-local-storage
     builds:
-      - casaos-local-storage-amd64
-      - casaos-local-storage-arm64
-      - casaos-local-storage-arm-7
-      - casaos-local-storage-riscv64
+      - nimoos-local-storage-amd64
+      - nimoos-local-storage-arm64
+      - nimoos-local-storage-arm-7
+      - nimoos-local-storage-riscv64
     files:
       - build/**/*
   - name_template: >-
       {{ .Os }}-{{- if eq .Arch "arm" }}arm-7{{- else }}{{ .Arch }}{{- end }}-{{ .ProjectName }}-migration-tool-v{{ .Version }}
-    id: casaos-local-storage-migration-tool
+    id: nimoos-local-storage-migration-tool
     builds:
-      - casaos-local-storage-migration-tool-amd64
-      - casaos-local-storage-migration-tool-arm64
-      - casaos-local-storage-migration-tool-arm-7
-      - casaos-local-storage-migration-tool-riscv64
+      - nimoos-local-storage-migration-tool-amd64
+      - nimoos-local-storage-migration-tool-arm64
+      - nimoos-local-storage-migration-tool-arm-7
+      - nimoos-local-storage-migration-tool-riscv64
     files:
       - build/sysroot/etc/**/*
 checksum:
@@ -210,8 +210,8 @@ changelog:
       - "^test:"
 release:
   github:
-    owner: IceWhaleTech
-    name: CasaOS-LocalStorage
+    owner: NimoTech
+    name: NimoOS-LocalStorage
   draft: true
   prerelease: auto
   mode: replace

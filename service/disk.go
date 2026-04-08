@@ -15,19 +15,22 @@ import (
 	"strings"
 	"time"
 
-	command2 "github.com/IceWhaleTech/CasaOS-Common/utils/command"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/exec"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/file"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/codegen/message_bus"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/common"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/model"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/config"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/fstab"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/mount"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/partition"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/utils/command"
-	model2 "github.com/IceWhaleTech/CasaOS-LocalStorage/service/model"
+	command2 "github.com/NimoTech/NimoOS-Common/utils/command"
+	"github.com/NimoTech/NimoOS-Common/utils/constants"
+	"github.com/NimoTech/NimoOS-Common/utils/exec"
+	"github.com/NimoTech/NimoOS-Common/utils/file"
+	"github.com/NimoTech/NimoOS-Common/utils/logger"
+	"github.com/NimoTech/NimoOS-LocalStorage/codegen/message_bus"
+	"github.com/NimoTech/NimoOS-LocalStorage/common"
+	"github.com/NimoTech/NimoOS-LocalStorage/model"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/config"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/fstab"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/mount"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/partition"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/utils/command"
+	model2 "github.com/NimoTech/NimoOS-LocalStorage/service/model"
+	v2 "github.com/NimoTech/NimoOS-LocalStorage/service/v2"
+	"github.com/NimoTech/NimoOS-LocalStorage/service/v2/fs"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/moby/sys/mountinfo"
 	"go.uber.org/zap"
@@ -64,7 +67,7 @@ type diskService struct {
 const (
 	PersistentTypeNone   = "none"
 	PersistentTypeFStab  = "fstab"
-	PersistentTypeCasaOS = "casaos"
+	PersistentTypeNimoOS = "nimoos"
 )
 
 var (
@@ -468,7 +471,7 @@ func (d *diskService) GetPersistentTypeByUUID(uuid string) string {
 	if result := d.db.Where(&model2.Volume{UUID: uuid}).Limit(1).Find(&m); result.Error != nil {
 		logger.Error("error when finding the volume by uuid in database", zap.Error(result.Error), zap.String("uuid", uuid))
 	} else if result.RowsAffected > 0 {
-		return PersistentTypeCasaOS
+		return PersistentTypeNimoOS
 	}
 
 	// check if it is in fstab
@@ -618,7 +621,7 @@ func (d *diskService) InitCheck() {
 					Name:       "local-storage:disk:added",
 					Properties: properties,
 				}
-				// add UI properties to applicable events so that CasaOS UI can render it
+				// add UI properties to applicable events so that NimoOS UI can render it
 				event := common.EventAdapterWithUIProperties(&eventModel)
 
 				bk := false

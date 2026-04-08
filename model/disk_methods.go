@@ -3,7 +3,7 @@ package model
 import (
 	"path/filepath"
 
-	"github.com/IceWhaleTech/CasaOS-Common/utils/file"
+	"github.com/NimoTech/NimoOS-Common/utils/file"
 )
 
 const defaultMountPath = "/media"

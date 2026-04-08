@@ -6,19 +6,19 @@ import (
 	"fmt"
 	"os"
 
-	interfaces "github.com/IceWhaleTech/CasaOS-Common"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/systemctl"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/common"
+	interfaces "github.com/NimoTech/NimoOS-Common"
+	"github.com/NimoTech/NimoOS-Common/utils/systemctl"
+	"github.com/NimoTech/NimoOS-LocalStorage/common"
 )
 
 const (
-	localStorageConfigDirPath  = "/etc/casaos"
-	localStorageConfigFilePath = "/etc/casaos/local-storage.conf"
-	localStorageName           = "casaos-local-storage.service"
+	localStorageConfigDirPath  = "/etc/nimoos"
+	localStorageConfigFilePath = "/etc/nimoos/local-storage.conf"
+	localStorageName           = "nimoos-local-storage.service"
 	localStorageNameShort      = "local-storage"
 )
 
-//go:embedded ../../build/sysroot/etc/casaos/local-storage.conf.sample
+//go:embedded ../../build/sysroot/etc/nimoos/local-storage.conf.sample
 // var _localStorageConfigFileSample string
 
 var (

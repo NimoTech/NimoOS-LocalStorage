@@ -4,12 +4,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/IceWhaleTech/CasaOS-Common/model"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/common_err"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/drivers/dropbox"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/drivers/google_drive"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/utils/httper"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/service"
+	"github.com/NimoTech/NimoOS-Common/model"
+	"github.com/NimoTech/NimoOS-Common/utils/common_err"
+	"github.com/NimoTech/NimoOS-LocalStorage/drivers/dropbox"
+	"github.com/NimoTech/NimoOS-LocalStorage/drivers/google_drive"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/utils/httper"
+	"github.com/NimoTech/NimoOS-LocalStorage/service"
 	"github.com/labstack/echo/v4"
 )
 

@@ -1,20 +1,20 @@
 openapi: 3.0.3
 
 info:
-  title: CasaOS Local Storage API
+  title: NimoOS Local Storage API
   version: v2
   description: |-
     <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_dark_night_800px.png">
-        <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_twilight_blue_800px.png">
-        <img alt="CasaOS" src="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_twilight_blue_800px.png">
+        <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/NimoTech/logo/main/nimoos/nimoos_banner_dark_night_800px.png">
+        <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/NimoTech/logo/main/nimoos/nimoos_banner_twilight_blue_800px.png">
+        <img alt="NimoOS" src="https://raw.githubusercontent.com/NimoTech/logo/main/nimoos/nimoos_banner_twilight_blue_800px.png">
     </picture>
 
-    CasaOS Local Storage service manages local storage including disks, partitions and mounting points.
+    NimoOS Local Storage service manages local storage including disks, partitions and mounting points.
 
     This API allows interacting with the service to conduct such management.
 
-    For issues and discussions, please visit the [GitHub repository](https://github.com/IceWhaleTech/CasaOS) or join [our Discord](https://discord.gg/knqAbbBbeX).
+    For issues and discussions, please visit the [GitHub repository](https://github.com/NimoTech/NimoOS) or join [our Discord](https://discord.gg/knqAbbBbeX).
 
 servers:
   - url: /v2/local_storage
@@ -297,6 +297,44 @@ components:
         mount_point:
           type: string
           example: "/DATA"
+    MergeStatus:
+      type: string
+      enum:
+        - "initialized"
+        - "uninitialized"
+        - "error"
+      default: "initialized state"
+      example: "initialized"
+    Merge:
+      type: object
+      required:
+        - mount_point
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        fstype:
+          type: string
+          default: "fuse.mergerfs"
+        mount_point:
+          type: string
+          example: "/DATA"
+        source_base_path:
+          type: string
+          example: "/var/lib/nimoos/files"
+        source_volume_uuids:
+          type: array
+          items:
+            type: string
+            example: 5c682e86-cec3-4761-9350-8e1a0c2d1ae9
+        created_at:
+          type: string
+          readOnly: true
+          format: date-time
+        updated_at:
+          type: string
+          readOnly: true
+          format: date-time
 
     Mount:
       type: object

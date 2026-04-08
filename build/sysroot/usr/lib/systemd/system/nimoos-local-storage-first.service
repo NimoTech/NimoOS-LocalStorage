@@ -3,7 +3,7 @@ Before=docker.service
 Description=Hello World
 
 [Service]
-ExecStart=/usr/bin/casaos-local-storage -init
+ExecStart=/usr/bin/nimoos-local-storage -init
 Type=oneshot
 
 

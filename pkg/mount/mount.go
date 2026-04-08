@@ -1,6 +1,6 @@
 package mount
 
-import "github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/utils/command"
+import "github.com/NimoTech/NimoOS-LocalStorage/pkg/utils/command"
 
 func Mount(source string, mountpoint string, fstype *string, options *string) error {
 	args := []string{"--verbose"}

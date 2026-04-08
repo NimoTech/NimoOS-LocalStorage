@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/IceWhaleTech/CasaOS-Common/utils/constants"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/model"
+	"github.com/NimoTech/NimoOS-Common/utils/constants"
+	"github.com/NimoTech/NimoOS-LocalStorage/model"
 	"gopkg.in/ini.v1"
 )
 
@@ -20,7 +20,7 @@ var (
 		LogPath:     constants.DefaultLogPath,
 		LogSaveName: "local-storage",
 		LogFileExt:  "log",
-		ShellPath:   "/usr/share/casaos/shell",
+		ShellPath:   "/usr/share/nimoos/shell",
 	}
 
 	ServerInfo = &model.ServerModel{

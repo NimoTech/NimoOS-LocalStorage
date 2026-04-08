@@ -1,5 +1,5 @@
 {
-  "name": "@icewhale/casaos-localstorage-openapi",
+  "name": "@nimo/nimoos-localstorage-openapi",
   "version": "0.0.1",
   "scripts": {
     "build": "rm -rf dist && tsc && rm -rf generate",
@@ -9,12 +9,12 @@
     "publish": "npm publish --access public",
     "start": "yarn generate:ts && yarn build"
   },
-  "homepage": "https://github.com/IceWhaleTech/CasaOS-LocalStorage#readme",
-  "description": "Casaos-Localstorage Typescript+Axios SDK",
+  "homepage": "https://github.com/NimoTech/NimoOS-LocalStorage#readme",
+  "description": "Nimoos-Localstorage Typescript+Axios SDK",
   "keywords": [
-    "CasaOS-localstorage",
+    "NimoOS-localstorage",
     "SDK",
-    "CasaOS-localstorage Axios"
+    "NimoOS-localstorage Axios"
   ],
   "main": "dist/index",
   "files": [
@@ -31,6 +31,6 @@
     "openapi-typescript-codegen": "^0.23.0",
     "typescript": "^4.9.5"
   },
-  "author": "casaos",
+  "author": "nimoos",
   "license": "Apache-2.0"
 }

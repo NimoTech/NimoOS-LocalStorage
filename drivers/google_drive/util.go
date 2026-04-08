@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/drivers/base"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/model"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/utils"
+	"github.com/NimoTech/NimoOS-Common/utils/logger"
+	"github.com/NimoTech/NimoOS-LocalStorage/drivers/base"
+	"github.com/NimoTech/NimoOS-LocalStorage/model"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
@@ -28,7 +28,7 @@ func (d *GoogleDrive) getRefreshToken() error {
 			"client_secret": d.ClientSecret,
 			"code":          d.Code,
 			"grant_type":    "authorization_code",
-			"redirect_uri":  "https://cloudoauth.files.casaos.app",
+			"redirect_uri":  "https://cloudoauth.files.nimoos.app",
 		}).Post(url)
 	if err != nil {
 		return err

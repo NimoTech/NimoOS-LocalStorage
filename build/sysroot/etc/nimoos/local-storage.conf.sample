@@ -1,0 +1,13 @@
+[common]
+RuntimePath=/var/run/nimoos
+
+[app]
+LogPath=/var/log/nimoos
+LogSaveName=local-storage
+LogFileExt=log
+DBPath=/var/lib/nimoos/db
+ShellPath=/usr/share/nimoos/shell
+
+[server]
+USBAutoMount=
+EnableMergerFS=false

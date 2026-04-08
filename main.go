@@ -1,5 +1,5 @@
 //go:generate bash -c "mkdir -p codegen && go run github.com/deepmap/oapi-codegen/cmd/oapi-codegen@v1.12.4 -generate types,server,spec -package codegen api/local_storage/openapi.yaml > codegen/local_storage_api.go"
-//go:generate bash -c "mkdir -p codegen/message_bus && go run github.com/deepmap/oapi-codegen/cmd/oapi-codegen@v1.12.4 -generate types,client -package message_bus https://raw.githubusercontent.com/IceWhaleTech/CasaOS-MessageBus/main/api/message_bus/openapi.yaml > codegen/message_bus/api.go"
+//go:generate bash -c "mkdir -p codegen/message_bus && go run github.com/deepmap/oapi-codegen/cmd/oapi-codegen@v1.12.4 -generate types,client -package message_bus ../NimoOS-MessageBus/api/message_bus/openapi.yaml > codegen/message_bus/api.go"
 
 package main
 
@@ -15,17 +15,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IceWhaleTech/CasaOS-Common/model"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/file"
-	util_http "github.com/IceWhaleTech/CasaOS-Common/utils/http"
-	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/codegen/message_bus"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/common"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/cache"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/config"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/pkg/sqlite"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/route"
-	"github.com/IceWhaleTech/CasaOS-LocalStorage/service"
+	"github.com/NimoTech/NimoOS-Common/model"
+	"github.com/NimoTech/NimoOS-Common/utils/file"
+	util_http "github.com/NimoTech/NimoOS-Common/utils/http"
+	"github.com/NimoTech/NimoOS-Common/utils/logger"
+	"github.com/NimoTech/NimoOS-LocalStorage/codegen/message_bus"
+	"github.com/NimoTech/NimoOS-LocalStorage/common"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/cache"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/config"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/sqlite"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/utils/merge"
+	"github.com/NimoTech/NimoOS-LocalStorage/route"
+	"github.com/NimoTech/NimoOS-LocalStorage/service"
 	"github.com/coreos/go-systemd/daemon"
 	"github.com/robfig/cron/v3"
 	"github.com/samber/lo"
@@ -44,7 +45,7 @@ var (
 	//go:embed api/local_storage/openapi.yaml
 	_docYAML string
 
-	//go:embed build/sysroot/etc/casaos/local-storage.conf.sample
+	//go:embed build/sysroot/etc/nimoos/local-storage.conf.sample
 	_confSample string
 )
 
@@ -114,11 +115,11 @@ func ensureDefaultDirectories() {
 	}
 
 	if sysType == "windows" {
-		dirArray = []string{"C:\\CasaOS\\DATA\\AppData", "C:\\CasaOS\\DATA\\Documents", "C:\\CasaOS\\DATA\\Downloads", "C:\\CasaOS\\DATA\\Gallery", "C:\\CasaOS\\DATA\\Media/Movies", "C:\\CasaOS\\DATA\\Media\\TV Shows", "C:\\CasaOS\\DATA\\Media\\Music"}
+		dirArray = []string{"C:\\NimoOS\\DATA\\AppData", "C:\\NimoOS\\DATA\\Documents", "C:\\NimoOS\\DATA\\Downloads", "C:\\NimoOS\\DATA\\Gallery", "C:\\NimoOS\\DATA\\Media/Movies", "C:\\NimoOS\\DATA\\Media\\TV Shows", "C:\\NimoOS\\DATA\\Media\\Music"}
 	}
 
 	if sysType == "darwin" {
-		dirArray = []string{"./CasaOS/DATA/AppData", "./CasaOS/DATA/Documents", "./CasaOS/DATA/Downloads", "./CasaOS/DATA/Gallery", "./CasaOS/DATA/Media/Movies", "./CasaOS/DATA/Media/TV Shows", "./CasaOS/DATA/Media/Music"}
+		dirArray = []string{"./NimoOS/DATA/AppData", "./NimoOS/DATA/Documents", "./NimoOS/DATA/Downloads", "./NimoOS/DATA/Gallery", "./NimoOS/DATA/Media/Movies", "./NimoOS/DATA/Media/TV Shows", "./NimoOS/DATA/Media/Music"}
 	}
 
 	for _, v := range dirArray {
