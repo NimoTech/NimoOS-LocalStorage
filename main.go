@@ -86,6 +86,7 @@ func init() {
 
 	checkToken2_11()
 	go ensureDefaultDirectories()
+	go service.MyService.RAID().RecoverOnBoot()
 	//service.MyService.Disk().EnsureDefaultMergePoint()
 
 	// service.MountLists = make(map[string]*mountlib.MountPoint)
@@ -160,6 +161,7 @@ func main() {
 		// "/v1/driver",
 		route.V2APIPath,
 		route.V2DocPath,
+		route.V2RAIDPath,
 	}
 	for _, apiPath := range apiPaths {
 		err = service.MyService.Gateway().CreateRoute(&model.Route{
@@ -176,11 +178,18 @@ func main() {
 	v1Router := route.InitV1Router()
 	v2Router := route.InitV2Router()
 	v2DocRouter := route.InitV2DocRouter(_docHTML, _docYAML)
+	raidRouter := route.InitRAIDRouter()
+
+	// Combine v2 routers: RAID routes + local_storage OpenAPI routes
+	v2Mux := http.NewServeMux()
+	v2Mux.Handle("/v2/raid/", raidRouter)
+	v2Mux.Handle("/v2/raid", raidRouter)
+	v2Mux.Handle("/", v2Router)
 
 	mux := &util_http.HandlerMultiplexer{
 		HandlerMap: map[string]http.Handler{
 			"v1":  v1Router,
-			"v2":  v2Router,
+			"v2":  v2Mux,
 			"doc": v2DocRouter,
 		},
 	}
