@@ -24,7 +24,6 @@ import (
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/cache"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/config"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/sqlite"
-	"github.com/NimoTech/NimoOS-LocalStorage/pkg/utils/merge"
 	"github.com/NimoTech/NimoOS-LocalStorage/route"
 	"github.com/NimoTech/NimoOS-LocalStorage/service"
 	"github.com/coreos/go-systemd/daemon"

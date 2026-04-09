@@ -138,7 +138,7 @@ func GetDiskList(ctx echo.Context) error {
 		}
 
 		if isAvail {
-			disk.NeedFormat = false
+			disk.NeedFormat = !supported
 			avail = append(avail, disk)
 		}
 

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	command2 "github.com/NimoTech/NimoOS-Common/utils/command"
-	"github.com/NimoTech/NimoOS-Common/utils/constants"
 	"github.com/NimoTech/NimoOS-Common/utils/exec"
 	"github.com/NimoTech/NimoOS-Common/utils/file"
 	"github.com/NimoTech/NimoOS-Common/utils/logger"
@@ -29,8 +28,6 @@ import (
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/partition"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/utils/command"
 	model2 "github.com/NimoTech/NimoOS-LocalStorage/service/model"
-	v2 "github.com/NimoTech/NimoOS-LocalStorage/service/v2"
-	"github.com/NimoTech/NimoOS-LocalStorage/service/v2/fs"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/moby/sys/mountinfo"
 	"go.uber.org/zap"
