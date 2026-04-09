@@ -21,6 +21,7 @@ jobs:
         with:
           repository: NimoTech/NimoOS-Common
           path: ../NimoOS-Common
+          token: ${{ secrets.API_TOKEN_GITHUB }}
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
