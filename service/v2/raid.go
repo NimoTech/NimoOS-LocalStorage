@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,6 +40,14 @@ type MemberDiskStatus struct {
 	State  string `json:"state"`
 	Number int    `json:"number"`
 }
+
+var validDevicePath = regexp.MustCompile(`^/dev/(sd[a-z]+[0-9]*|nvme[0-9]+n[0-9]+(p[0-9]+)?|md[0-9]+)$`)
+
+func isValidDevicePath(path string) bool {
+	return validDevicePath.MatchString(path)
+}
+
+var validRAIDName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type raidService struct {
 	db *gorm.DB
@@ -109,6 +118,16 @@ func minDisks(level int) (int, error) {
 // ---------------------------------------------------------------------------
 
 func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int) (*model.RAIDArray, error) {
+	// 0. Validate name and device paths.
+	if !validRAIDName.MatchString(name) {
+		return nil, fmt.Errorf("invalid RAID name: %q (only alphanumeric, hyphens, underscores allowed)", name)
+	}
+	for _, dp := range diskPaths {
+		if !isValidDevicePath(dp) {
+			return nil, fmt.Errorf("invalid device path: %q", dp)
+		}
+	}
+
 	// 1. Validate RAID level and disk count.
 	min, err := minDisks(level)
 	if err != nil {
@@ -169,6 +188,9 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 	}
 
 	// 9. Build member disk references.
+	// NOTE: Using Volume model for member tracking with device path as UUID field.
+	// This is a pragmatic approach for the join table. Consider a dedicated RAIDMember
+	// model if this causes issues with the existing disk tracking logic.
 	members := make([]*model.Volume, 0, len(diskPaths))
 	for _, dp := range diskPaths {
 		members = append(members, &model.Volume{
@@ -222,7 +244,7 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 
 	// 3. Stop the array.
 	if err := mdadm.Stop(raid.DevicePath); err != nil {
-		logger.Info("mdadm stop failed", zap.String("device", raid.DevicePath), zap.String("error", err.Error()))
+		return fmt.Errorf("failed to stop RAID array: %w", err)
 	}
 
 	// 4. Zero superblock on each member disk.
@@ -267,7 +289,7 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 
 	// 3. Map detail state to DB state.
 	liveState := mapMdadmState(detail.State)
-	status.LiveState = liveState
+	status.LiveState = detail.State
 	status.RebuildPct = detail.RebuildPct
 
 	// 4. Update DB if state changed.
@@ -303,6 +325,14 @@ func (s *raidService) ListRAIDArrays() ([]*model.RAIDArray, error) {
 // ---------------------------------------------------------------------------
 
 func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string) error {
+	// 0. Validate device paths.
+	if !isValidDevicePath(oldDiskPath) {
+		return fmt.Errorf("invalid device path: %q", oldDiskPath)
+	}
+	if !isValidDevicePath(newDiskPath) {
+		return fmt.Errorf("invalid device path: %q", newDiskPath)
+	}
+
 	// 1. Get RAID from DB.
 	raid, err := s.getRAIDByID(arrayID)
 	if err != nil {
@@ -371,6 +401,7 @@ func (s *raidService) RecoverOnBoot() error {
 		// Mount the device.
 		if out, err := exec.Command("mount", raid.DevicePath, raid.MountPoint).CombinedOutput(); err != nil {
 			logger.Error("mount failed on boot", zap.String("device", raid.DevicePath), zap.String("mount", raid.MountPoint), zap.Error(err), zap.String("output", string(out)))
+			_ = s.updateRAIDState(raid.ID, "failed")
 			continue
 		}
 

@@ -92,12 +92,12 @@ func AssembleScan() error {
 	return nil
 }
 
-// SaveConfig writes config: bash -c "mdadm --detail --scan >> /etc/mdadm/mdadm.conf"
+// SaveConfig writes config: bash -c "mdadm --detail --scan > /etc/mdadm/mdadm.conf"
 func SaveConfig() error {
 	logger.Info("mdadm save config")
-	out, err := exec.Command("bash", "-c", "mdadm --detail --scan >> /etc/mdadm/mdadm.conf").CombinedOutput()
+	out, err := exec.Command("bash", "-c", "mdadm --detail --scan > /etc/mdadm/mdadm.conf").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("mdadm save config: %w: %s", err, string(out))
+		return fmt.Errorf("failed to save mdadm config: %w\noutput: %s", err, string(out))
 	}
 	return nil
 }
