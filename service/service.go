@@ -24,6 +24,7 @@ type Services interface {
 	Shares() external.ShareService
 	MessageBus() *message_bus.ClientWithResponses
 	Storage() StorageService
+	RAID() v2.RAIDService
 }
 
 func NewService(db *gorm.DB) Services {
@@ -34,6 +35,7 @@ func NewService(db *gorm.DB) Services {
 
 	notifySystem := external.NewNotifyService(config.CommonInfo.RuntimePath)
 	sharesService := external.NewShareService(config.CommonInfo.RuntimePath)
+	raidService := v2.NewRAIDService(db)
 
 	return &store{
 		usb:          NewUSBService(),
@@ -44,6 +46,7 @@ func NewService(db *gorm.DB) Services {
 		notifySystem: notifySystem,
 		shares:       sharesService,
 		storage:      NewStorageService(),
+		raid:         raidService,
 	}
 }
 
@@ -56,6 +59,7 @@ type store struct {
 	notifySystem external.NotifyService
 	shares       external.ShareService
 	storage      StorageService
+	raid         v2.RAIDService
 }
 
 func (c *store) NotifySystem() external.NotifyService {
@@ -88,6 +92,10 @@ func (c *store) Notify() NotifyServer {
 
 func (c *store) Shares() external.ShareService {
 	return c.shares
+}
+
+func (c *store) RAID() v2.RAIDService {
+	return c.raid
 }
 
 func (c *store) MessageBus() *message_bus.ClientWithResponses {
