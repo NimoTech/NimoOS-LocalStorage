@@ -28,6 +28,7 @@ type RAIDService interface {
 	ListRAIDArrays() ([]*model.RAIDArray, error)
 	ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string) error
 	RecoverOnBoot() error
+	Recover(id uint) (string, error)
 }
 
 // RAIDStatus extends the DB model with live state from mdadm.
@@ -695,4 +696,140 @@ func (s *raidService) refreshMemberCaches(raid *model.RAIDArray) {
 			s.updateMemberCache(member.ID, path)
 		}
 	}
+}
+
+const (
+	retryInterval = 30 * time.Second
+	maxRetries    = 5
+)
+
+// startRetryWorker launches a background goroutine that periodically tries to
+// assemble and mount a RAID array. Each array gets its own goroutine + context
+// so they can be independently cancelled (e.g. on manual recover).
+func (s *raidService) startRetryWorker(arrayID uint, arrayUUID string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.retryMu.Lock()
+	if old, exists := s.retryCancels[arrayID]; exists {
+		old() // cancel any existing worker for this array
+	}
+	s.retryCancels[arrayID] = cancel
+	s.retryMu.Unlock()
+
+	go func() {
+		defer func() {
+			s.retryMu.Lock()
+			delete(s.retryCancels, arrayID)
+			s.retryMu.Unlock()
+		}()
+
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryInterval):
+			}
+
+			// Actively try to assemble — required for hot-plugged disks.
+			mdadm.AssembleScan()
+
+			uuidToDevice, err := buildUUIDMap()
+			if err != nil {
+				continue
+			}
+			device, assembled := uuidToDevice[arrayUUID]
+			if !assembled {
+				logger.Info("retry: array not yet assembled", zap.Int("attempt", attempt), zap.String("uuid", arrayUUID))
+				continue
+			}
+
+			raid, err := s.getRAIDByUUID(arrayUUID)
+			if err != nil {
+				continue
+			}
+			if device != raid.DevicePath {
+				s.db.Model(raid).Update("device_path", device)
+				raid.DevicePath = device
+			}
+
+			_ = os.MkdirAll(raid.MountPoint, 0o755)
+
+			if out, err := exec.Command("mount", device, raid.MountPoint).CombinedOutput(); err != nil {
+				if !strings.Contains(string(out), "already mounted") {
+					logger.Info("retry mount failed", zap.Int("attempt", attempt), zap.String("output", string(out)))
+					continue
+				}
+			}
+
+			// Success.
+			if detail, err := mdadm.Detail(device); err == nil {
+				_ = s.updateRAIDState(raid.ID, mapMdadmState(detail.State))
+			} else {
+				_ = s.updateRAIDState(raid.ID, "active")
+			}
+			go s.refreshMemberCaches(raid)
+			logger.Info("retry mount succeeded", zap.Int("attempt", attempt), zap.String("uuid", arrayUUID))
+			return
+		}
+
+		// All retries exhausted.
+		if raid, err := s.getRAIDByUUID(arrayUUID); err == nil {
+			_ = s.updateRAIDState(raid.ID, "failed")
+			logger.Info("retry exhausted, marking failed", zap.String("uuid", arrayUUID))
+		}
+	}()
+}
+
+// Recover manually triggers reassembly and mount for a single RAID array.
+// Cancels any running retry goroutine, attempts immediately, then re-schedules
+// retry if the attempt fails.
+func (s *raidService) Recover(id uint) (string, error) {
+	raid, err := s.getRAIDByID(id)
+	if err != nil {
+		return "", fmt.Errorf("get RAID: %w", err)
+	}
+
+	// Cancel existing retry goroutine for this array.
+	s.retryMu.Lock()
+	if cancel, exists := s.retryCancels[id]; exists {
+		cancel()
+		delete(s.retryCancels, id)
+	}
+	s.retryMu.Unlock()
+
+	// Try to assemble.
+	mdadm.AssembleScan()
+
+	uuidToDevice, err := buildUUIDMap()
+	if err != nil || uuidToDevice[raid.UUID] == "" {
+		_ = s.updateRAIDState(id, "retrying")
+		s.startRetryWorker(id, raid.UUID)
+		return "retrying", nil
+	}
+
+	device := uuidToDevice[raid.UUID]
+	if device != raid.DevicePath {
+		s.db.Model(raid).Update("device_path", device)
+		raid.DevicePath = device
+	}
+
+	_ = os.MkdirAll(raid.MountPoint, 0o755)
+
+	if out, err := exec.Command("mount", device, raid.MountPoint).CombinedOutput(); err != nil {
+		if !strings.Contains(string(out), "already mounted") {
+			logger.Info("manual recover mount failed", zap.String("output", string(out)))
+			_ = s.updateRAIDState(id, "retrying")
+			s.startRetryWorker(id, raid.UUID)
+			return "retrying", nil
+		}
+	}
+
+	var state string
+	if detail, err := mdadm.Detail(device); err == nil {
+		state = mapMdadmState(detail.State)
+	} else {
+		state = "active"
+	}
+	_ = s.updateRAIDState(id, state)
+	go s.refreshMemberCaches(raid)
+	return state, nil
 }

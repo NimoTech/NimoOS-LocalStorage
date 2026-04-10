@@ -92,6 +92,31 @@ func GetRAIDStatus(ctx echo.Context) error {
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: status})
 }
 
+// RecoverRAIDArray handles POST /v2/raid/:id/recover
+func RecoverRAIDArray(ctx echo.Context) error {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return ctx.JSON(http.StatusBadRequest, model.Result{
+			Success: common_err.INVALID_PARAMS,
+			Message: common_err.GetMsg(common_err.INVALID_PARAMS),
+		})
+	}
+
+	state, err := service.MyService.RAID().Recover(uint(id))
+	if err != nil {
+		logger.Error("error when recovering RAID array", zap.Error(err), zap.Uint64("id", id))
+		return ctx.JSON(http.StatusInternalServerError, model.Result{
+			Success: common_err.SERVICE_ERROR,
+			Message: err.Error(),
+		})
+	}
+	return ctx.JSON(common_err.SUCCESS, model.Result{
+		Success: common_err.SUCCESS,
+		Message: common_err.GetMsg(common_err.SUCCESS),
+		Data:    map[string]string{"state": state},
+	})
+}
+
 // ReplaceDisk handles POST /v2/raid/:id/disk
 func ReplaceDisk(ctx echo.Context) error {
 	idStr := ctx.Param("id")
