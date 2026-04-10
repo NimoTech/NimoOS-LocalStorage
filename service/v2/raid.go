@@ -219,15 +219,14 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("get array detail: %w", err)
 	}
 
-	// 9. Build member disk references.
-	// NOTE: Using Volume model for member tracking with device path as UUID field.
-	// This is a pragmatic approach for the join table. Consider a dedicated RAIDMember
-	// model if this causes issues with the existing disk tracking logic.
-	members := make([]*model.Volume, 0, len(diskPaths))
+	// 9. Build member disk references with persistent identifiers.
+	members := make([]*model.RAIDMember, 0, len(diskPaths))
 	for _, dp := range diskPaths {
-		members = append(members, &model.Volume{
-			UUID:       dp,
-			MountPoint: mountPoint,
+		ids := diskid.Identify(dp)
+		members = append(members, &model.RAIDMember{
+			DiskByID:        ids.ByID,
+			DiskSerial:      ids.Serial,
+			DevicePathCache: ids.DevicePath,
 		})
 	}
 
