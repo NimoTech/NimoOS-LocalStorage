@@ -635,3 +635,66 @@ func getRAIDCapacity(mountPoint string, status *RAIDStatus) error {
 
 	return nil
 }
+
+// buildUUIDMap reads /proc/mdstat and returns a map of mdadm UUID → device path.
+// e.g. {"3e316422:d065eb05:f8547081:cb43b63d": "/dev/md0"}
+func buildUUIDMap() (map[string]string, error) {
+	entries, err := mdadm.ReadMDStat()
+	if err != nil {
+		return nil, fmt.Errorf("read mdstat: %w", err)
+	}
+	result := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		device := "/dev/" + entry.Device
+		detail, err := mdadm.Detail(device)
+		if err != nil {
+			logger.Info("mdadm detail failed during UUID map build", zap.String("device", device), zap.Error(err))
+			continue
+		}
+		if detail.UUID != "" {
+			result[detail.UUID] = device
+		}
+	}
+	return result, nil
+}
+
+// parseMdadmName extracts the array name from mdadm detail Name field.
+// Format is "hostname:arrayname"; returns "arrayname".
+// Falls back to the first 8 characters of uuid to guarantee uniqueness
+// when two or more arrays have no valid name (prevents mount point conflicts).
+func parseMdadmName(name string, uuid string) string {
+	if idx := strings.LastIndex(name, ":"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	name = strings.TrimSpace(name)
+	// Sanitize: keep only alphanumeric, hyphens, underscores
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	if result := b.String(); result != "" {
+		return result
+	}
+	// Fallback: use UUID prefix to guarantee uniqueness
+	if len(uuid) >= 8 {
+		return uuid[:8]
+	}
+	return "raid"
+}
+
+// refreshMemberCaches updates DevicePathCache for all members of a RAID array.
+// Called asynchronously after a successful mount.
+func (s *raidService) refreshMemberCaches(raid *model.RAIDArray) {
+	for _, member := range raid.MemberDisks {
+		ids := diskid.DiskIdentifiers{
+			ByID:       member.DiskByID,
+			Serial:     member.DiskSerial,
+			DevicePath: member.DevicePathCache,
+		}
+		if path, ok := diskid.Resolve(ids); ok && path != member.DevicePathCache {
+			s.updateMemberCache(member.ID, path)
+		}
+	}
+}

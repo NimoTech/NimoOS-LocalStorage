@@ -3,6 +3,7 @@ package mdadm
 // ArrayDetail holds parsed output from `mdadm --detail /dev/mdX`
 type ArrayDetail struct {
 	Device      string       // e.g. /dev/md0
+	Name        string       // array name from mdadm, format "hostname:arrayname"
 	UUID        string       // array UUID
 	Level       string       // raid0, raid1, raid5, raid6
 	State       string       // clean, degraded, recovering, inactive

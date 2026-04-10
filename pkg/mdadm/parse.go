@@ -45,6 +45,8 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 				detail.Level = value
 			case "State":
 				detail.State = value
+			case "Name":
+				detail.Name = value
 			case "UUID":
 				detail.UUID = value
 			case "Active Devices":
