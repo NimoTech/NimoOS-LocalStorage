@@ -662,6 +662,10 @@ func buildUUIDMap() (map[string]string, error) {
 // Falls back to the first 8 characters of uuid to guarantee uniqueness
 // when two or more arrays have no valid name (prevents mount point conflicts).
 func parseMdadmName(name string, uuid string) string {
+	// Strip mdadm's trailing parenthetical comment, e.g. "(local to host hostname)"
+	if idx := strings.Index(name, "("); idx >= 0 {
+		name = name[:idx]
+	}
 	if idx := strings.LastIndex(name, ":"); idx >= 0 {
 		name = name[idx+1:]
 	}
