@@ -288,9 +288,22 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 	}
 
 	// 4. Zero superblock on each member disk.
+	// Resolve current path before zeroing; warn if disk is offline (can't zero).
 	for _, member := range raid.MemberDisks {
-		if err := mdadm.ZeroSuperblock(member.DevicePathCache); err != nil {
-			logger.Info("zero superblock failed", zap.String("disk", member.DevicePathCache), zap.String("error", err.Error()))
+		ids := diskid.DiskIdentifiers{
+			ByID:       member.DiskByID,
+			Serial:     member.DiskSerial,
+			DevicePath: member.DevicePathCache,
+		}
+		path, ok := diskid.Resolve(ids)
+		if !ok {
+			logger.Info("cannot zero superblock: disk not resolvable (may be offline)",
+				zap.String("cache", member.DevicePathCache),
+				zap.String("by_id", member.DiskByID))
+			continue
+		}
+		if err := mdadm.ZeroSuperblock(path); err != nil {
+			logger.Info("zero superblock failed", zap.String("disk", path), zap.Error(err))
 		}
 	}
 
