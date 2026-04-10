@@ -370,6 +370,7 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string)
 
 // ---------------------------------------------------------------------------
 // RecoverOnBoot reassembles all known RAID arrays and remounts them.
+// Also auto-discovers RAID arrays present on system but not yet in DB.
 // ---------------------------------------------------------------------------
 
 func (s *raidService) RecoverOnBoot() error {
@@ -378,13 +379,74 @@ func (s *raidService) RecoverOnBoot() error {
 		logger.Error("mdadm assemble scan failed", zap.Error(err))
 	}
 
-	// 2. List all RAIDs from DB.
+	// 2. Discover all RAID arrays currently on system.
+	mdstatEntries, err := mdadm.ReadMDStat()
+	if err != nil {
+		logger.Error("read mdstat failed on boot", zap.Error(err))
+	}
+
+	// 3. For each system RAID, check if in DB; if not, auto-register.
+	for _, entry := range mdstatEntries {
+		device := "/dev/" + entry.Device
+
+		// Check if this device is already in DB.
+		var existing model.RAIDArray
+		result := s.db.Where("device_path = ?", device).First(&existing)
+		isFound := result.Error == nil
+
+		if !isFound {
+			// Auto-register this array.
+			detail, err := mdadm.Detail(device)
+			if err != nil {
+				logger.Error("mdadm detail failed for system array on boot", zap.String("device", device), zap.Error(err))
+				continue
+			}
+
+			// Parse RAID level from detail.Level (e.g., "raid1" -> 1)
+			raidLevel := parseRAIDLevel(detail.Level)
+
+			// Generate name and mount point.
+			arrayName := strings.TrimPrefix(entry.Device, "md")
+			if arrayName == "" {
+				arrayName = "raid"
+			}
+			mountPoint := fmt.Sprintf("/media/RAID_%s", arrayName)
+
+			newArray := &model.RAIDArray{
+				Name:       fmt.Sprintf("RAID%d_%s", raidLevel, arrayName),
+				Level:      raidLevel,
+				DevicePath: device,
+				MountPoint: mountPoint,
+				UUID:       detail.UUID,
+				State:      mapMdadmState(detail.State),
+				ChunkKB:    512, // default value since ArrayDetail doesn't have ChunkKB
+			}
+
+			// Get member disks using Volume model with UUID field storing device path.
+			for _, member := range detail.Members {
+				vol := &model.Volume{
+					UUID: member.Path,
+				}
+				newArray.MemberDisks = append(newArray.MemberDisks, vol)
+			}
+
+			// Save to DB.
+			if err := s.saveRAID(newArray); err != nil {
+				logger.Error("failed to auto-register RAID on boot", zap.String("device", device), zap.Error(err))
+				continue
+			}
+
+			logger.Info("auto-registered RAID array on boot", zap.String("device", device), zap.String("name", newArray.Name))
+		}
+	}
+
+	// 4. List all RAIDs from DB.
 	raids, err := s.listRAIDs()
 	if err != nil {
 		return fmt.Errorf("list RAIDs: %w", err)
 	}
 
-	// 3. For each array: check device, mount, update state.
+	// 5. For each DB array: check device, mount, update state.
 	for _, raid := range raids {
 		if _, err := os.Stat(raid.DevicePath); err != nil {
 			logger.Error("RAID device not found on boot", zap.String("device", raid.DevicePath), zap.Error(err))
@@ -421,6 +483,22 @@ func (s *raidService) RecoverOnBoot() error {
 	}
 
 	return nil
+}
+
+// parseRAIDLevel converts string level like "raid1" to integer 1.
+func parseRAIDLevel(levelStr string) int {
+	switch strings.ToLower(levelStr) {
+	case "raid0":
+		return 0
+	case "raid1":
+		return 1
+	case "raid5":
+		return 5
+	case "raid6":
+		return 6
+	default:
+		return 0
+	}
 }
 
 // ---------------------------------------------------------------------------

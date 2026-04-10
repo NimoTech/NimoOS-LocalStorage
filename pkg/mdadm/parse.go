@@ -101,7 +101,8 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 	}
 
 	// Device line pattern: "md0 : active raid5 sdc[2] sdb[1] sda[0]"
-	deviceRe := regexp.MustCompile(`^(md\d+)\s*:\s*(\w+)\s+(\w+)\s+(.+)$`)
+	// Also handles states like "active (auto-read-only) raid1 ..."
+	deviceRe := regexp.MustCompile(`^(md\d+)\s*:\s*(\w+(?:\s*\([^)]*\))?)\s+(\w+)\s+(.+)$`)
 	// Disk status bracket pattern: "[UUU]" or "[UU_]"
 	diskStatusRe := regexp.MustCompile(`\[([U_]+)\]`)
 	// Rebuild/recovery percentage: "recovery = 45.2%"
