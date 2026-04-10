@@ -435,112 +435,110 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string)
 // ---------------------------------------------------------------------------
 
 func (s *raidService) RecoverOnBoot() error {
-	// 1. Assemble all known arrays.
-	if err := mdadm.AssembleScan(); err != nil {
-		logger.Error("mdadm assemble scan failed", zap.Error(err))
-	}
+	// 1. Assemble all known arrays from mdadm.conf superblocks.
+	mdadm.AssembleScan()
 
-	// 2. Discover all RAID arrays currently on system.
-	mdstatEntries, err := mdadm.ReadMDStat()
+	// 2. Build UUID → device path map from currently active md devices.
+	uuidToDevice, err := buildUUIDMap()
 	if err != nil {
-		logger.Error("read mdstat failed on boot", zap.Error(err))
+		logger.Error("failed to build UUID map on boot", zap.Error(err))
+		uuidToDevice = map[string]string{}
 	}
 
-	// 3. For each system RAID, check if in DB; if not, auto-register.
-	for _, entry := range mdstatEntries {
-		device := "/dev/" + entry.Device
-
-		// Check if this device is already in DB.
+	// 3. Auto-register arrays found on system but not in DB.
+	for uuid, device := range uuidToDevice {
 		var existing model.RAIDArray
-		result := s.db.Where("device_path = ?", device).First(&existing)
-		isFound := result.Error == nil
-
-		if !isFound {
-			// Auto-register this array.
-			detail, err := mdadm.Detail(device)
-			if err != nil {
-				logger.Error("mdadm detail failed for system array on boot", zap.String("device", device), zap.Error(err))
-				continue
+		found := s.db.Preload("MemberDisks").Where("uuid = ?", uuid).First(&existing).Error == nil
+		if found {
+			// Update stale device path cache (md number may have changed).
+			if existing.DevicePath != device {
+				s.db.Model(&existing).Update("device_path", device)
 			}
+			// Refresh member caches asynchronously.
+			existing.DevicePath = device
+			go s.refreshMemberCaches(&existing)
+			continue
+		}
 
-			// Parse RAID level from detail.Level (e.g., "raid1" -> 1)
-			raidLevel := parseRAIDLevel(detail.Level)
+		// New array: collect metadata and register.
+		detail, err := mdadm.Detail(device)
+		if err != nil {
+			logger.Error("mdadm detail failed for new array on boot", zap.String("device", device), zap.Error(err))
+			continue
+		}
 
-			// Generate name and mount point.
-			arrayName := strings.TrimPrefix(entry.Device, "md")
-			if arrayName == "" {
-				arrayName = "raid"
-			}
-			mountPoint := fmt.Sprintf("/media/RAID_%s", arrayName)
-
-			newArray := &model.RAIDArray{
-				Name:       fmt.Sprintf("RAID%d_%s", raidLevel, arrayName),
-				Level:      raidLevel,
-				DevicePath: device,
-				MountPoint: mountPoint,
-				UUID:       detail.UUID,
-				State:      mapMdadmState(detail.State),
-				ChunkKB:    512, // default value since ArrayDetail doesn't have ChunkKB
-			}
-
-			// Get member disks using Volume model with UUID field storing device path.
-			for _, member := range detail.Members {
-				vol := &model.Volume{
-					UUID: member.Path,
-				}
-				newArray.MemberDisks = append(newArray.MemberDisks, vol)
-			}
-
-			// Save to DB.
-			if err := s.saveRAID(newArray); err != nil {
-				logger.Error("failed to auto-register RAID on boot", zap.String("device", device), zap.Error(err))
-				continue
-			}
-
-			logger.Info("auto-registered RAID array on boot", zap.String("device", device), zap.String("name", newArray.Name))
+		arrayName := parseMdadmName(detail.Name, uuid)
+		mountPoint := fmt.Sprintf("/media/RAID_%s", arrayName)
+		newArray := &model.RAIDArray{
+			Name:       arrayName,
+			Level:      parseRAIDLevel(detail.Level),
+			DevicePath: device,
+			MountPoint: mountPoint,
+			UUID:       uuid,
+			State:      mapMdadmState(detail.State),
+			ChunkKB:    512,
+		}
+		for _, m := range detail.Members {
+			ids := diskid.Identify(m.Path)
+			newArray.MemberDisks = append(newArray.MemberDisks, &model.RAIDMember{
+				DiskByID:        ids.ByID,
+				DiskSerial:      ids.Serial,
+				DevicePathCache: ids.DevicePath,
+			})
+		}
+		if err := s.saveRAID(newArray); err != nil {
+			logger.Error("failed to auto-register RAID on boot", zap.String("device", device), zap.Error(err))
+		} else {
+			logger.Info("auto-registered RAID array on boot", zap.String("device", device), zap.String("name", arrayName))
 		}
 	}
 
-	// 4. List all RAIDs from DB.
+	// 4. Mount all DB arrays.
 	raids, err := s.listRAIDs()
 	if err != nil {
 		return fmt.Errorf("list RAIDs: %w", err)
 	}
 
-	// 5. For each DB array: check device, mount, update state.
 	for _, raid := range raids {
-		if _, err := os.Stat(raid.DevicePath); err != nil {
-			logger.Error("RAID device not found on boot", zap.String("device", raid.DevicePath), zap.Error(err))
-			_ = s.updateRAIDState(raid.ID, "failed")
+		device, assembled := uuidToDevice[raid.UUID]
+		if !assembled {
+			// md device not present — disks may be missing or not yet connected.
+			logger.Info("RAID not assembled on boot, scheduling retry", zap.String("uuid", raid.UUID))
+			_ = s.updateRAIDState(raid.ID, "retrying")
+			s.startRetryWorker(raid.ID, raid.UUID)
 			continue
 		}
 
-		// Ensure mount directory exists.
+		// Update device path cache if md number changed.
+		if device != raid.DevicePath {
+			s.db.Model(raid).Update("device_path", device)
+			raid.DevicePath = device
+		}
+
 		if err := os.MkdirAll(raid.MountPoint, 0o755); err != nil {
 			logger.Error("create mount point failed on boot", zap.String("mount", raid.MountPoint), zap.Error(err))
+			_ = s.updateRAIDState(raid.ID, "retrying")
+			s.startRetryWorker(raid.ID, raid.UUID)
 			continue
 		}
 
-		// Mount the device.
-		if out, err := exec.Command("mount", raid.DevicePath, raid.MountPoint).CombinedOutput(); err != nil {
-			logger.Error("mount failed on boot", zap.String("device", raid.DevicePath), zap.String("mount", raid.MountPoint), zap.Error(err), zap.String("output", string(out)))
-			_ = s.updateRAIDState(raid.ID, "failed")
-			continue
-		}
-
-		// Update state from mdadm detail.
-		detail, err := mdadm.Detail(raid.DevicePath)
-		if err != nil {
-			logger.Error("mdadm detail failed on boot", zap.String("device", raid.DevicePath), zap.Error(err))
-			continue
-		}
-
-		newState := mapMdadmState(detail.State)
-		if newState != raid.State {
-			if err := s.updateRAIDState(raid.ID, newState); err != nil {
-				logger.Error("update RAID state on boot failed", zap.Uint("id", raid.ID), zap.Error(err))
+		// Mount without requiring all members to resolve —
+		// degraded arrays are already handled by mdadm internally.
+		// Treat "already mounted" as success (idempotent).
+		if out, err := exec.Command("mount", device, raid.MountPoint).CombinedOutput(); err != nil {
+			if !strings.Contains(string(out), "already mounted") {
+				logger.Error("mount failed on boot", zap.String("device", device), zap.String("output", string(out)), zap.Error(err))
+				_ = s.updateRAIDState(raid.ID, "retrying")
+				s.startRetryWorker(raid.ID, raid.UUID)
+				continue
 			}
 		}
+
+		// Sync live state from mdadm.
+		if detail, err := mdadm.Detail(device); err == nil {
+			_ = s.updateRAIDState(raid.ID, mapMdadmState(detail.State))
+		}
+		go s.refreshMemberCaches(raid)
 	}
 
 	return nil
