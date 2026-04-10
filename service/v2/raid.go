@@ -1,15 +1,18 @@
 package v2
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/NimoTech/NimoOS-Common/utils/logger"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/diskid"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/mdadm"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/partition"
 	"github.com/NimoTech/NimoOS-LocalStorage/service/model"
@@ -54,12 +57,17 @@ func isValidDevicePath(path string) bool {
 var validRAIDName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type raidService struct {
-	db *gorm.DB
+	db           *gorm.DB
+	retryMu      sync.Mutex
+	retryCancels map[uint]context.CancelFunc
 }
 
 // NewRAIDService creates a new RAIDService backed by the given database.
 func NewRAIDService(db *gorm.DB) RAIDService {
-	return &raidService{db: db}
+	return &raidService{
+		db:           db,
+		retryCancels: make(map[uint]context.CancelFunc),
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +86,14 @@ func (s *raidService) getRAIDByID(id uint) (*model.RAIDArray, error) {
 	return &r, nil
 }
 
+func (s *raidService) getRAIDByUUID(uuid string) (*model.RAIDArray, error) {
+	var r model.RAIDArray
+	if err := s.db.Preload("MemberDisks").Where("uuid = ?", uuid).First(&r).Error; err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 func (s *raidService) listRAIDs() ([]*model.RAIDArray, error) {
 	var raids []*model.RAIDArray
 	if err := s.db.Preload("MemberDisks").Find(&raids).Error; err != nil {
@@ -86,16 +102,21 @@ func (s *raidService) listRAIDs() ([]*model.RAIDArray, error) {
 	return raids, nil
 }
 
+// deleteRAID deletes member records (hasMany) then the array record.
 func (s *raidService) deleteRAID(id uint) error {
-	r := &model.RAIDArray{ID: id}
-	if err := s.db.Model(r).Association("MemberDisks").Clear(); err != nil {
-		return fmt.Errorf("clear member disk association: %w", err)
+	if err := s.db.Where("raid_array_id = ?", id).Delete(&model.RAIDMember{}).Error; err != nil {
+		return fmt.Errorf("delete member records: %w", err)
 	}
-	return s.db.Delete(r).Error
+	return s.db.Delete(&model.RAIDArray{}, id).Error
 }
 
 func (s *raidService) updateRAIDState(id uint, state string) error {
 	return s.db.Model(&model.RAIDArray{}).Where("id = ?", id).Update("state", state).Error
+}
+
+// updateMemberCache writes the resolved device path back to DevicePathCache.
+func (s *raidService) updateMemberCache(memberID uint, path string) {
+	s.db.Model(&model.RAIDMember{}).Where("id = ?", memberID).Update("device_path_cache", path)
 }
 
 // ---------------------------------------------------------------------------
@@ -269,8 +290,8 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 
 	// 4. Zero superblock on each member disk.
 	for _, member := range raid.MemberDisks {
-		if err := mdadm.ZeroSuperblock(member.UUID); err != nil {
-			logger.Info("zero superblock failed", zap.String("disk", member.UUID), zap.String("error", err.Error()))
+		if err := mdadm.ZeroSuperblock(member.DevicePathCache); err != nil {
+			logger.Info("zero superblock failed", zap.String("disk", member.DevicePathCache), zap.String("error", err.Error()))
 		}
 	}
 
@@ -374,10 +395,13 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string)
 		return fmt.Errorf("add disk %s: %w", newDiskPath, err)
 	}
 
-	// 4. Update member disk in DB.
+	// 4. Update member disk in DB — identify new disk, replace old entry.
 	for _, member := range raid.MemberDisks {
-		if member.UUID == oldDiskPath {
-			member.UUID = newDiskPath
+		if member.DevicePathCache == oldDiskPath {
+			ids := diskid.Identify(newDiskPath)
+			member.DiskByID = ids.ByID
+			member.DiskSerial = ids.Serial
+			member.DevicePathCache = ids.DevicePath
 			if err := s.db.Save(member).Error; err != nil {
 				return fmt.Errorf("update member disk in db: %w", err)
 			}
