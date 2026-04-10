@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ type RAIDStatus struct {
 	*model.RAIDArray
 	LiveState  string             `json:"live_state"`
 	RebuildPct float64            `json:"rebuild_pct"`
+	TotalBytes int64              `json:"total_bytes"`  // total capacity in bytes
+	UsedBytes  int64              `json:"used_bytes"`   // used capacity in bytes
+	FreeBytes  int64              `json:"free_bytes"`   // available capacity in bytes
 	Members    []MemberDiskStatus `json:"members"`
 }
 
@@ -309,6 +313,11 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 		})
 	}
 
+	// 6. Get capacity information from df.
+	if err := getRAIDCapacity(raid.MountPoint, status); err != nil {
+		logger.Info("failed to get RAID capacity", zap.String("mount", raid.MountPoint), zap.Error(err))
+	}
+
 	return status, nil
 }
 
@@ -530,4 +539,47 @@ func mapMdadmState(mdadmState string) string {
 	default:
 		return "active"
 	}
+}
+
+// getRAIDCapacity retrieves capacity info from df command for a mounted RAID.
+func getRAIDCapacity(mountPoint string, status *RAIDStatus) error {
+	// Run: df -B 1 <mountPoint> (output in bytes)
+	// Format: Filesystem     1B-blocks    Used Available Use% Mounted on
+	out, err := exec.Command("df", "-B", "1", mountPoint).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("df failed: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return fmt.Errorf("df output has less than 2 lines")
+	}
+
+	// Parse the second line (first is header)
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		return fmt.Errorf("df output line has less than 4 fields")
+	}
+
+	// fields[1] = total, fields[2] = used, fields[3] = available
+	total, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse total: %w", err)
+	}
+
+	used, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse used: %w", err)
+	}
+
+	available, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse available: %w", err)
+	}
+
+	status.TotalBytes = total
+	status.UsedBytes = used
+	status.FreeBytes = available
+
+	return nil
 }
