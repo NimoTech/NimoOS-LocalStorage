@@ -19,7 +19,8 @@ func Create(device string, level int, members []string, chunkKB int) error {
 		fmt.Sprintf("--level=%d", level),
 		fmt.Sprintf("--raid-devices=%d", len(members)),
 	}
-	if chunkKB > 0 {
+	// chunk size only applies to RAID 0, 5, 6; RAID 1 forbids it
+	if chunkKB > 0 && level != 1 {
 		args = append(args, fmt.Sprintf("--chunk=%d", chunkKB))
 	}
 	args = append(args, "--run")

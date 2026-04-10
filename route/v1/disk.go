@@ -122,6 +122,10 @@ func GetDiskList(ctx echo.Context) error {
 			continue
 		}
 
+		if currentDisk.Size == 0 {
+			continue
+		}
+
 		if reflect.DeepEqual(temp, model1.SmartctlA{}) {
 			temp.SmartStatus.Passed = true
 		}

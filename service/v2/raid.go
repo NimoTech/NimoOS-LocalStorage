@@ -152,24 +152,31 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("find available md device: %w", err)
 	}
 
-	// 4. Create the array.
+	// 4. Zero superblocks to clear any stale RAID metadata from previous attempts.
+	for _, dp := range diskPaths {
+		if err := mdadm.ZeroSuperblock(dp); err != nil {
+			logger.Info("zero-superblock failed (disk may be clean)", zap.String("disk", dp), zap.Error(err))
+		}
+	}
+
+	// 5. Create the array.
 	if err := mdadm.Create(device, level, diskPaths, chunkKB); err != nil {
 		return nil, fmt.Errorf("create RAID array: %w", err)
 	}
 
-	// 5. Wait for device to appear (up to 10s).
+	// 6. Wait for device to appear (up to 10s).
 	if err := waitForDevice(device, 10*time.Second); err != nil {
 		_ = mdadm.Stop(device)
 		return nil, fmt.Errorf("device %s did not appear: %w", device, err)
 	}
 
-	// 6. Format with ext4.
+	// 7. Format with ext4.
 	if err := partition.FormatPartition(device); err != nil {
 		_ = mdadm.Stop(device)
 		return nil, fmt.Errorf("format %s: %w", device, err)
 	}
 
-	// 7. Create mount point and mount.
+	// 8. Create mount point and mount.
 	mountPoint := fmt.Sprintf("/media/RAID_%s", name)
 	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
 		_ = mdadm.Stop(device)
@@ -182,7 +189,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("mount %s on %s: %w: %s", device, mountPoint, err, string(out))
 	}
 
-	// 8. Get UUID from mdadm detail.
+	// 9. Get UUID from mdadm detail.
 	detail, err := mdadm.Detail(device)
 	if err != nil {
 		_ = exec.Command("umount", mountPoint).Run()
@@ -241,12 +248,21 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 	}
 
 	// 2. Unmount and remove mount directory.
-	if out, err := exec.Command("umount", raid.MountPoint).CombinedOutput(); err != nil {
-		logger.Info("umount failed (may already be unmounted)", zap.String("mount", raid.MountPoint), zap.String("error", err.Error()), zap.String("output", string(out)))
+	// Try by mount point, then by device path, with lazy fallback each time.
+	for _, target := range []string{raid.MountPoint, raid.DevicePath} {
+		if out, err := exec.Command("umount", target).CombinedOutput(); err != nil {
+			logger.Info("umount failed, retrying with -l", zap.String("target", target), zap.String("error", err.Error()), zap.String("output", string(out)))
+			out2, err2 := exec.Command("umount", "-l", target).CombinedOutput()
+			logger.Info("umount -l result", zap.String("target", target), zap.Bool("ok", err2 == nil), zap.String("output", string(out2)))
+		}
 	}
 	_ = os.Remove(raid.MountPoint)
 
 	// 3. Stop the array.
+	// Log current mount state to help diagnose if stop still fails.
+	if out, err := exec.Command("grep", raid.DevicePath, "/proc/mounts").CombinedOutput(); err == nil && len(out) > 0 {
+		logger.Info("device still in /proc/mounts before stop", zap.String("device", raid.DevicePath), zap.String("mounts", string(out)))
+	}
 	if err := mdadm.Stop(raid.DevicePath); err != nil {
 		return fmt.Errorf("failed to stop RAID array: %w", err)
 	}
@@ -530,10 +546,10 @@ func waitForDevice(device string, timeout time.Duration) error {
 func mapMdadmState(mdadmState string) string {
 	lower := strings.ToLower(mdadmState)
 	switch {
+	case strings.Contains(lower, "recovering") || strings.Contains(lower, "resyncing"):
+		return "rebuilding"
 	case strings.Contains(lower, "degraded"):
 		return "degraded"
-	case strings.Contains(lower, "recovering"):
-		return "rebuilding"
 	case strings.Contains(lower, "inactive"):
 		return "failed"
 	default:
