@@ -149,6 +149,9 @@ func monitorUEvent(ctx context.Context) {
 
 			switch uevent.Env["DEVTYPE"] {
 			case "partition":
+				if uevent.Action == "add" {
+					go service.MyService.Disk().AutoMountPartition(uevent.Env["DEVNAME"])
+				}
 
 				switch uevent.Env["ID_BUS"] {
 				case "usb":

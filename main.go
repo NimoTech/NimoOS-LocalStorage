@@ -84,6 +84,9 @@ func init() {
 		return
 	}
 
+	// 自动检查并挂载之前保存的磁盘
+	service.MyService.Disk().CheckSerialDiskMount()
+
 	checkToken2_11()
 	go ensureDefaultDirectories()
 	go service.MyService.RAID().RecoverOnBoot()

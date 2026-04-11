@@ -55,6 +55,7 @@ type DiskService interface {
 	SaveMountPointToDB(m model2.Volume) error
 	InitCheck()
 	GetSystemDf() (model.DFDiskSpace, error)
+	AutoMountPartition(path string) error
 }
 
 type diskService struct {
@@ -762,6 +763,45 @@ func WalkDisk(rootBlk model.LSBLKModel, depth uint, shouldStopAt func(blk model.
 		if blk := WalkDisk(blkChild, depth-1, shouldStopAt); blk != nil {
 			return blk
 		}
+	}
+
+	return nil
+}
+
+func (d *diskService) AutoMountPartition(path string) error {
+	m := d.GetDiskInfo(path)
+	if m.Type != "part" || m.MountPoint != "" {
+		return nil
+	}
+
+	if m.UUID == "" {
+		return errors.New("cannot auto-mount partition without UUID")
+	}
+
+	// Create a unique mount point based on the first part of the UUID
+	uuidPart := m.UUID
+	if len(uuidPart) > 8 {
+		uuidPart = m.UUID[:8]
+	}
+	mountPoint := "/mnt/Disk-" + uuidPart
+
+	logger.Info("auto-mounting new partition...", zap.String("path", path), zap.String("mountPoint", mountPoint))
+
+	if output, err := d.MountDisk(path, mountPoint); err != nil {
+		logger.Error("failed to auto-mount partition", zap.Error(err), zap.String("output", output))
+		return err
+	}
+
+	// Persist to database so CheckSerialDiskMount can find it after reboot
+	v := model2.Volume{
+		UUID:       m.UUID,
+		MountPoint: mountPoint,
+		CreatedAt:  time.Now().Unix(),
+	}
+
+	if err := d.SaveMountPointToDB(v); err != nil {
+		logger.Error("failed to save auto-mounted volume to db", zap.Error(err), zap.Any("volume", v))
+		return err
 	}
 
 	return nil
