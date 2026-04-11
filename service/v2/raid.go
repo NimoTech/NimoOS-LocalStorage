@@ -399,8 +399,14 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string)
 	}
 
 	// 2. Remove old disk.
-	if err := mdadm.RemoveDisk(raid.DevicePath, oldDiskPath); err != nil {
-		return fmt.Errorf("remove disk %s: %w", oldDiskPath, err)
+	// Skip --fail --remove if the disk is no longer present on the system
+	// (physically pulled out); mdadm already considers it removed.
+	if _, statErr := os.Stat(oldDiskPath); statErr == nil {
+		if err := mdadm.RemoveDisk(raid.DevicePath, oldDiskPath); err != nil {
+			return fmt.Errorf("remove disk %s: %w", oldDiskPath, err)
+		}
+	} else {
+		logger.Info("old disk not present, skipping --fail --remove", zap.String("disk", oldDiskPath))
 	}
 
 	// 3. Add new disk.

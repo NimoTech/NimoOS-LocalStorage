@@ -23,6 +23,10 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 	// Fields: Number Major Minor RaidDevice State... /dev/sdX
 	memberRe := regexp.MustCompile(`^\s+(\d+)\s+\d+\s+\d+\s+\d+\s+(.+?)\s+(/dev/\S+)\s*$`)
 
+	// Regex for removed member lines (physically pulled disk):
+	// "   -   0   0   N   removed"
+	removedRe := regexp.MustCompile(`^\s+-\s+\d+\s+\d+\s+(\d+)\s+(removed)\s*$`)
+
 	// Rebuild status line: "     Rebuild Status : 45% complete"
 	rebuildRe := regexp.MustCompile(`(?i)rebuild\s+status\s*:\s*([\d.]+)%`)
 
@@ -80,6 +84,14 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 				detail.Members = append(detail.Members, MemberDisk{
 					Path:   path,
 					State:  state,
+					Number: number,
+				})
+			} else if m := removedRe.FindStringSubmatch(line); m != nil {
+				// Physically removed disk: slot exists but device is gone
+				number, _ := strconv.Atoi(strings.TrimSpace(m[1]))
+				detail.Members = append(detail.Members, MemberDisk{
+					Path:   "",
+					State:  "removed",
 					Number: number,
 				})
 			}
