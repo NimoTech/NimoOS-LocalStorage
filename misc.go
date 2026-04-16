@@ -125,25 +125,35 @@ func monitorUEvent(ctx context.Context) {
 				// add UI properties to applicable events so that NimoOS UI can render it
 				event := common.EventAdapterWithUIProperties(event)
 
+				shouldPublish := true
+
 				if v, ok := event.Properties["local-storage:path"]; ok && strings.Contains(event.Name, "disk") {
 
 					diskModel := service.MyService.Disk().GetDiskInfo(v)
 					if !reflect.DeepEqual(diskModel, model.LSBLKModel{}) {
 
-						properties := common.AdditionalProperties(diskModel)
-						for k, v := range properties {
-							event.Properties[k] = v
+						// Only exclude RAID devices (like /dev/md*) instead of all virtual devices
+						if strings.HasPrefix(diskModel.Path, "/dev/md") || strings.HasPrefix(diskModel.Type, "raid") {
+							shouldPublish = false
+						} else {
+							properties := common.AdditionalProperties(diskModel)
+							for k, val := range properties {
+								event.Properties[k] = val
+							}
 						}
 					}
 				}
-				logger.Info("disk model", zap.Any("diskModel", event.Name))
-				response, err := service.MyService.MessageBus().PublishEventWithResponse(ctx, event.SourceID, event.Name, event.Properties)
-				if err != nil {
-					logger.Error("failed to publish event to message bus", zap.Error(err), zap.Any("event", event))
-				}
 
-				if response.StatusCode() != http.StatusOK {
-					logger.Error("failed to publish event to message bus", zap.String("status", response.Status()), zap.Any("response", response))
+				if shouldPublish {
+					logger.Info("disk model", zap.Any("diskModel", event.Name))
+					response, err := service.MyService.MessageBus().PublishEventWithResponse(ctx, event.SourceID, event.Name, event.Properties)
+					if err != nil {
+						logger.Error("failed to publish event to message bus", zap.Error(err), zap.Any("event", event))
+					}
+
+					if response != nil && response.StatusCode() != http.StatusOK {
+						logger.Error("failed to publish event to message bus", zap.String("status", response.Status()), zap.Any("response", response))
+					}
 				}
 			}
 
