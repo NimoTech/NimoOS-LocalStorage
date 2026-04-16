@@ -22,10 +22,12 @@ type MemberDisk struct {
 
 // MDStatEntry holds parsed info from one array in /proc/mdstat
 type MDStatEntry struct {
-	Device     string   // e.g. md0 (no /dev/ prefix)
-	State      string   // active, inactive
-	Level      string   // raid0, raid1, raid5, raid6
-	Members    []string // member device names e.g. ["sda[0]", "sdb[1]"]
-	DiskStatus string   // e.g. "[UUU_]" — U=up, _=down
-	RebuildPct float64  // -1 if not rebuilding
+	Device        string   // e.g. md0 (no /dev/ prefix)
+	State         string   // active, inactive
+	Level         string   // raid0, raid1, raid5, raid6
+	Members       []string // member device names e.g. ["sda[0]", "sdb[1]"]
+	DiskStatus    string   // e.g. "[UUU_]" — U=up, _=down
+	RebuildPct    float64  // -1 if not rebuilding
+	RebuildFinish string   // estimated time remaining, e.g. "95.3min"
+	RebuildSpeed  string   // rebuild speed, e.g. "88888K/sec"
 }

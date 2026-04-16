@@ -121,6 +121,8 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 	diskStatusRe := regexp.MustCompile(`\[([U_]+)\]`)
 	// Rebuild/recovery percentage: "recovery = 45.2%"
 	rebuildRe := regexp.MustCompile(`(?:recovery|resync)\s*=\s*([\d.]+)%`)
+	finishRe := regexp.MustCompile(`finish=([A-Za-z0-9.]+)`)
+	speedRe := regexp.MustCompile(`speed=([A-Za-z0-9./]+)`)
 
 	lines := strings.Split(output, "\n")
 	var current *MDStatEntry
@@ -155,6 +157,12 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 		if rb := rebuildRe.FindStringSubmatch(line); rb != nil {
 			pct, _ := strconv.ParseFloat(rb[1], 64)
 			current.RebuildPct = pct
+		}
+		if fi := finishRe.FindStringSubmatch(line); fi != nil {
+			current.RebuildFinish = fi[1]
+		}
+		if sp := speedRe.FindStringSubmatch(line); sp != nil {
+			current.RebuildSpeed = sp[1]
 		}
 	}
 

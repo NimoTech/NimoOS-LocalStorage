@@ -36,12 +36,14 @@ type RAIDService interface {
 // RAIDStatus extends the DB model with live state from mdadm.
 type RAIDStatus struct {
 	*model.RAIDArray
-	LiveState  string             `json:"live_state"`
-	RebuildPct float64            `json:"rebuild_pct"`
-	TotalBytes int64              `json:"total_bytes"` // total capacity in bytes
-	UsedBytes  int64              `json:"used_bytes"`  // used capacity in bytes
-	FreeBytes  int64              `json:"free_bytes"`  // available capacity in bytes
-	Members    []MemberDiskStatus `json:"members"`
+	LiveState     string             `json:"live_state"`
+	RebuildPct    float64            `json:"rebuild_pct"`
+	RebuildFinish string             `json:"rebuild_finish"`
+	RebuildSpeed  string             `json:"rebuild_speed"`
+	TotalBytes    int64              `json:"total_bytes"` // total capacity in bytes
+	UsedBytes     int64              `json:"used_bytes"`  // used capacity in bytes
+	FreeBytes     int64              `json:"free_bytes"`  // available capacity in bytes
+	Members       []MemberDiskStatus `json:"members"`
 }
 
 // MemberDiskStatus represents the live state of a single member disk.
@@ -424,6 +426,19 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 	liveState := mapMdadmState(detail.State)
 	status.LiveState = detail.State
 	status.RebuildPct = detail.RebuildPct
+
+	// Fetch mdstat for finish time and speed
+	mdstatEntries, mdstatErr := mdadm.ReadMDStat()
+	if mdstatErr == nil {
+		mdName := strings.TrimPrefix(raid.DevicePath, "/dev/")
+		for _, e := range mdstatEntries {
+			if e.Device == mdName {
+				status.RebuildFinish = e.RebuildFinish
+				status.RebuildSpeed = e.RebuildSpeed
+				break
+			}
+		}
+	}
 
 	// 4. Update DB if state changed.
 	if liveState != raid.State {
