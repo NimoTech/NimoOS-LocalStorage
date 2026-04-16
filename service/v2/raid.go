@@ -440,6 +440,9 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 			if e.Device == mdName {
 				status.RebuildFinish = e.RebuildFinish
 				status.RebuildSpeed = e.RebuildSpeed
+				if e.RebuildPct >= 0 {
+					status.RebuildPct = e.RebuildPct
+				}
 				break
 			}
 		}

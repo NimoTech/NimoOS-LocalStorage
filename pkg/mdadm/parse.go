@@ -27,8 +27,8 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 	// "   -   0   0   N   removed"
 	removedRe := regexp.MustCompile(`^\s+-\s+\d+\s+\d+\s+(\d+)\s+(removed)\s*$`)
 
-	// Rebuild status line: "     Rebuild Status : 45% complete"
-	rebuildRe := regexp.MustCompile(`(?i)rebuild\s+status\s*:\s*([\d.]+)%`)
+	// Rebuild/resync status line: "     Rebuild Status : 45% complete" or "     Resync Status : 45% complete"
+	rebuildRe := regexp.MustCompile(`(?i)(?:rebuild|resync)\s+status\s*:\s*([\d.]+)%`)
 
 	inTable := false
 

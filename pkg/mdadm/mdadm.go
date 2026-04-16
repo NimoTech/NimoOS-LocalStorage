@@ -12,7 +12,8 @@ import (
 )
 
 const DefaultMdadmPath = "mdadm"
-var MdadmPath = "/home/nimo/NimoOS-dev/NimoOS-LocalStorage/bin/mdadm"
+
+var MdadmPath = DefaultMdadmPath
 
 // Create creates a new RAID array.
 // mdadm --create <device> --level=<level> --raid-devices=<n> [--chunk=<kb>] --run <members...>
