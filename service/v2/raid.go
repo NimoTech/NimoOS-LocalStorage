@@ -357,7 +357,17 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 	}
 	_ = os.Remove(raid.MountPoint)
 
-	// 3. Stop the array.
+	// 3. Deactivate any LVM volume group that uses this device as a PV.
+	// pvs exits 5 when the device isn't a PV, so we check stdout instead.
+	if pvOut, _ := exec.Command("pvs", "--noheadings", "-o", "vg_name", raid.DevicePath).CombinedOutput(); len(strings.TrimSpace(string(pvOut))) > 0 {
+		vgName := strings.TrimSpace(string(pvOut))
+		logger.Info("deactivating LVM VG before stopping RAID", zap.String("vg", vgName), zap.String("device", raid.DevicePath))
+		if out, err := exec.Command("vgchange", "-an", vgName).CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to deactivate LVM VG %s on %s: %s", vgName, raid.DevicePath, strings.TrimSpace(string(out)))
+		}
+	}
+
+	// 4. Stop the array.
 	// Log current mount state to help diagnose if stop still fails.
 	if out, err := exec.Command("grep", raid.DevicePath, "/proc/mounts").CombinedOutput(); err == nil && len(out) > 0 {
 		logger.Info("device still in /proc/mounts before stop", zap.String("device", raid.DevicePath), zap.String("mounts", string(out)))
@@ -374,7 +384,7 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		logger.Info("device already missing or not an md device, continuing with deletion", zap.String("device", raid.DevicePath))
 	}
 
-	// 4. Zero superblock on each member disk.
+	// 5. Zero superblock on each member disk.
 	// Resolve current path before zeroing; warn if disk is offline (can't zero).
 	for _, member := range raid.MemberDisks {
 		ids := diskid.DiskIdentifiers{
@@ -394,7 +404,7 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		}
 	}
 
-	// 5. Delete from DB.
+	// 6. Delete from DB.
 	if err := s.deleteRAID(id); err != nil {
 		return fmt.Errorf("delete RAID from db: %w", err)
 	}
