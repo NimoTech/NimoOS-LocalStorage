@@ -25,3 +25,7 @@ dist/
 .idea
 .package-lock.json
 nimoos-local-storage
+
+# Apple hidden files
+._*
+.DS_Store

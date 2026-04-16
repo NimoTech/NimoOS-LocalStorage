@@ -58,6 +58,7 @@ func InitRAIDRouter() http.Handler {
 	raidGroup.POST("", v2.CreateRAIDArray)
 	raidGroup.DELETE("/:id", v2.DeleteRAIDArray)
 	raidGroup.GET("/:id/status", v2.GetRAIDStatus)
+	raidGroup.GET("/:id/usage", v2.GetRAIDUsage)
 	raidGroup.POST("/:id/disk", v2.ReplaceDisk)
 	raidGroup.POST("/:id/recover", v2.RecoverRAIDArray)
 

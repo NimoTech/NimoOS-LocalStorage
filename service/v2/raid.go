@@ -22,9 +22,11 @@ import (
 
 // RAIDService manages RAID array lifecycle.
 type RAIDService interface {
-	CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int) (*model.RAIDArray, error)
+	CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string) (*model.RAIDArray, error)
 	DeleteRAIDArray(id uint) error
 	GetRAIDStatus(id uint) (*RAIDStatus, error)
+	GetRAIDUsage(id uint) (*RAIDUsage, error)
+	EnsureFilesystemResized(id uint) error
 	ListRAIDArrays() ([]*model.RAIDArray, error)
 	ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string) error
 	RecoverOnBoot() error
@@ -36,9 +38,9 @@ type RAIDStatus struct {
 	*model.RAIDArray
 	LiveState  string             `json:"live_state"`
 	RebuildPct float64            `json:"rebuild_pct"`
-	TotalBytes int64              `json:"total_bytes"`  // total capacity in bytes
-	UsedBytes  int64              `json:"used_bytes"`   // used capacity in bytes
-	FreeBytes  int64              `json:"free_bytes"`   // available capacity in bytes
+	TotalBytes int64              `json:"total_bytes"` // total capacity in bytes
+	UsedBytes  int64              `json:"used_bytes"`  // used capacity in bytes
+	FreeBytes  int64              `json:"free_bytes"`  // available capacity in bytes
 	Members    []MemberDiskStatus `json:"members"`
 }
 
@@ -61,13 +63,20 @@ type raidService struct {
 	db           *gorm.DB
 	retryMu      sync.Mutex
 	retryCancels map[uint]context.CancelFunc
+	usageMu      sync.Mutex
+	usageCache   map[uint]cachedBtrfsUsage
 }
 
 // NewRAIDService creates a new RAIDService backed by the given database.
 func NewRAIDService(db *gorm.DB) RAIDService {
+	if err := checkBtrfsSupport(); err != nil {
+		logger.Info("btrfs tooling is unavailable at startup; btrfs create/usage features may fail", zap.Error(err))
+	}
+
 	return &raidService{
 		db:           db,
 		retryCancels: make(map[uint]context.CancelFunc),
+		usageCache:   make(map[uint]cachedBtrfsUsage),
 	}
 }
 
@@ -105,9 +114,24 @@ func (s *raidService) listRAIDs() ([]*model.RAIDArray, error) {
 
 // deleteRAID deletes member records (hasMany) then the array record.
 func (s *raidService) deleteRAID(id uint) error {
-	if err := s.db.Where("raid_array_id = ?", id).Delete(&model.RAIDMember{}).Error; err != nil {
-		return fmt.Errorf("delete member records: %w", err)
+	// Need to check what column GORM uses for the foreign key.
+	// Since model.RAIDMember defines `RAIDArrayID`, gorm will map it to `raid_array_id`.
+	// But just to be safe, we can use the model itself with GORM's association to delete.
+	raid := &model.RAIDArray{ID: id}
+	if err := s.db.Model(raid).Association("MemberDisks").Clear(); err != nil {
+		logger.Error("failed to clear member disks association", zap.Error(err))
 	}
+
+	// Fallback direct delete in case the clear didn't actually delete the rows
+	if err := s.db.Where("raid_array_id = ?", id).Delete(&model.RAIDMember{}).Error; err != nil {
+		// Ignore "no such column" errors if the schema somehow doesn't match what we expect,
+		// as the main goal is to delete the RAID array itself.
+		if !strings.Contains(err.Error(), "no such column") {
+			return fmt.Errorf("delete member records: %w", err)
+		}
+		logger.Info("ignored 'no such column' error when deleting members", zap.Error(err))
+	}
+
 	return s.db.Delete(&model.RAIDArray{}, id).Error
 }
 
@@ -143,7 +167,7 @@ func minDisks(level int) (int, error) {
 // CreateRAIDArray creates a new software RAID array.
 // ---------------------------------------------------------------------------
 
-func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int) (*model.RAIDArray, error) {
+func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string) (*model.RAIDArray, error) {
 	// 0. Validate name and device paths.
 	if !validRAIDName.MatchString(name) {
 		return nil, fmt.Errorf("invalid RAID name: %q (only alphanumeric, hyphens, underscores allowed)", name)
@@ -151,6 +175,16 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 	for _, dp := range diskPaths {
 		if !isValidDevicePath(dp) {
 			return nil, fmt.Errorf("invalid device path: %q", dp)
+		}
+	}
+
+	fs, err := normalizeCreateFilesystem(filesystem)
+	if err != nil {
+		return nil, err
+	}
+	if fs == "btrfs" {
+		if err := checkBtrfsSupport(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -192,10 +226,15 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("device %s did not appear: %w", device, err)
 	}
 
-	// 7. Format with ext4.
-	if err := partition.FormatPartition(device); err != nil {
+	// 7. Clear stale signatures then format with requested filesystem.
+	if err := wipeDeviceSignatures(device); err != nil {
 		_ = mdadm.Stop(device)
-		return nil, fmt.Errorf("format %s: %w", device, err)
+		return nil, fmt.Errorf("wipefs %s: %w", device, err)
+	}
+
+	if err := partition.FormatDevice(device, fs); err != nil {
+		_ = mdadm.Stop(device)
+		return nil, fmt.Errorf("format %s as %s: %w", device, fs, err)
 	}
 
 	// 8. Create mount point and mount.
@@ -205,10 +244,21 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("create mount point %s: %w", mountPoint, err)
 	}
 
-	if out, err := exec.Command("mount", device, mountPoint).CombinedOutput(); err != nil {
+	if fs == "btrfs" {
+		if err := btrfsSetupSubvolumes(device); err != nil {
+			_ = os.Remove(mountPoint)
+			_ = mdadm.Stop(device)
+			return nil, fmt.Errorf("setup btrfs subvolumes: %w", err)
+		}
+	}
+
+	if err := mountRAIDDevice(device, mountPoint, fs); err != nil {
 		_ = os.Remove(mountPoint)
 		_ = mdadm.Stop(device)
-		return nil, fmt.Errorf("mount %s on %s: %w: %s", device, mountPoint, err, string(out))
+		return nil, fmt.Errorf("mount %s on %s: %w", device, mountPoint, err)
+	}
+	if fs == "btrfs" {
+		applyNoCoWPolicy(mountPoint)
 	}
 
 	// 9. Get UUID from mdadm detail.
@@ -235,6 +285,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 	raid := &model.RAIDArray{
 		Name:        name,
 		Level:       level,
+		Filesystem:  fs,
 		DevicePath:  device,
 		MountPoint:  mountPoint,
 		UUID:        detail.UUID,
@@ -269,12 +320,32 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 	}
 
 	// 2. Unmount and remove mount directory.
-	// Try by mount point, then by device path, with lazy fallback each time.
+	// We DO NOT use lazy unmount (-l) because it hides the busy state from umount,
+	// but leaves the block device open, causing mdadm.Stop to fail later.
 	for _, target := range []string{raid.MountPoint, raid.DevicePath} {
-		if out, err := exec.Command("umount", target).CombinedOutput(); err != nil {
-			logger.Info("umount failed, retrying with -l", zap.String("target", target), zap.String("error", err.Error()), zap.String("output", string(out)))
-			out2, err2 := exec.Command("umount", "-l", target).CombinedOutput()
-			logger.Info("umount -l result", zap.String("target", target), zap.Bool("ok", err2 == nil), zap.String("output", string(out2)))
+		// Search with space boundaries to avoid matching /dev/md01 when looking for /dev/md0
+		grepCmd := fmt.Sprintf("grep ' %s ' /proc/mounts || grep '^%s ' /proc/mounts", target, target)
+		out, err := exec.Command("sh", "-c", grepCmd).CombinedOutput()
+		if err != nil || len(out) == 0 {
+			continue // Not currently mounted
+		}
+
+		// Attempt to unmount normally.
+		if outUmount, errUmount := exec.Command("umount", target).CombinedOutput(); errUmount != nil {
+			busyInfo := ""
+
+			// Try to find what is occupying the target
+			lsofArg := target
+			if stat, err := os.Stat(target); err == nil && stat.IsDir() {
+				lsofArg = "+D " + target
+			}
+
+			lsofCmd := exec.Command("sh", "-c", fmt.Sprintf("lsof %s 2>/dev/null || true", lsofArg))
+			if lsofOut, _ := lsofCmd.CombinedOutput(); len(strings.TrimSpace(string(lsofOut))) > 0 {
+				busyInfo = fmt.Sprintf("\nBusy processes:\n%s", string(lsofOut))
+			}
+
+			return fmt.Errorf("failed to unmount %s: %s (target is busy)%s", target, strings.TrimSpace(string(outUmount)), busyInfo)
 		}
 	}
 	_ = os.Remove(raid.MountPoint)
@@ -285,7 +356,15 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		logger.Info("device still in /proc/mounts before stop", zap.String("device", raid.DevicePath), zap.String("mounts", string(out)))
 	}
 	if err := mdadm.Stop(raid.DevicePath); err != nil {
-		return fmt.Errorf("failed to stop RAID array: %w", err)
+		// If mdadm says the device doesn't exist or isn't an md device, it's already gone/stopped.
+		// We can safely ignore this error and proceed to delete from DB.
+		errStr := err.Error()
+		if !strings.Contains(errStr, "No such file or directory") &&
+			!strings.Contains(errStr, "does not appear to be an md device") &&
+			!strings.Contains(errStr, "not found") {
+			return fmt.Errorf("failed to stop RAID array: %w", err)
+		}
+		logger.Info("device already missing or not an md device, continuing with deletion", zap.String("device", raid.DevicePath))
 	}
 
 	// 4. Zero superblock on each member disk.
@@ -442,6 +521,8 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string)
 // ---------------------------------------------------------------------------
 
 func (s *raidService) RecoverOnBoot() error {
+	s.normalizeUnknownFilesystems()
+
 	// 1. Assemble all known arrays from mdadm.conf superblocks.
 	mdadm.AssembleScan()
 
@@ -476,9 +557,14 @@ func (s *raidService) RecoverOnBoot() error {
 
 		arrayName := parseMdadmName(detail.Name, uuid)
 		mountPoint := fmt.Sprintf("/media/RAID_%s", arrayName)
+		filesystem, fsErr := detectFilesystemByDevice(device)
+		if fsErr != nil {
+			logger.Info("failed to detect filesystem for auto-registered RAID", zap.String("device", device), zap.Error(fsErr))
+		}
 		newArray := &model.RAIDArray{
 			Name:       arrayName,
 			Level:      parseRAIDLevel(detail.Level),
+			Filesystem: filesystem,
 			DevicePath: device,
 			MountPoint: mountPoint,
 			UUID:       uuid,
@@ -529,12 +615,20 @@ func (s *raidService) RecoverOnBoot() error {
 			continue
 		}
 
+		filesystem, err := s.resolveFilesystemForDevice(raid, device)
+		if err != nil {
+			logger.Error("resolve filesystem failed on boot", zap.String("device", device), zap.Uint("raid_id", raid.ID), zap.Error(err))
+			_ = s.updateRAIDState(raid.ID, "retrying")
+			s.startRetryWorker(raid.ID, raid.UUID)
+			continue
+		}
+
 		// Mount without requiring all members to resolve —
 		// degraded arrays are already handled by mdadm internally.
 		// Treat "already mounted" as success (idempotent).
-		if out, err := exec.Command("mount", device, raid.MountPoint).CombinedOutput(); err != nil {
-			if !strings.Contains(string(out), "already mounted") {
-				logger.Error("mount failed on boot", zap.String("device", device), zap.String("output", string(out)), zap.Error(err))
+		if err := mountRAIDDevice(device, raid.MountPoint, filesystem); err != nil {
+			if !strings.Contains(err.Error(), "already mounted") {
+				logger.Error("mount failed on boot", zap.String("device", device), zap.Error(err))
 				_ = s.updateRAIDState(raid.ID, "retrying")
 				s.startRetryWorker(raid.ID, raid.UUID)
 				continue
@@ -763,9 +857,15 @@ func (s *raidService) startRetryWorker(arrayID uint, arrayUUID string) {
 
 			_ = os.MkdirAll(raid.MountPoint, 0o755)
 
-			if out, err := exec.Command("mount", device, raid.MountPoint).CombinedOutput(); err != nil {
-				if !strings.Contains(string(out), "already mounted") {
-					logger.Info("retry mount failed", zap.Int("attempt", attempt), zap.String("output", string(out)))
+			filesystem, err := s.resolveFilesystemForDevice(raid, device)
+			if err != nil {
+				logger.Info("retry resolve filesystem failed", zap.Int("attempt", attempt), zap.String("uuid", arrayUUID), zap.Error(err))
+				continue
+			}
+
+			if err := mountRAIDDevice(device, raid.MountPoint, filesystem); err != nil {
+				if !strings.Contains(err.Error(), "already mounted") {
+					logger.Info("retry mount failed", zap.Int("attempt", attempt), zap.String("error", err.Error()))
 					continue
 				}
 			}
@@ -824,9 +924,17 @@ func (s *raidService) Recover(id uint) (string, error) {
 
 	_ = os.MkdirAll(raid.MountPoint, 0o755)
 
-	if out, err := exec.Command("mount", device, raid.MountPoint).CombinedOutput(); err != nil {
-		if !strings.Contains(string(out), "already mounted") {
-			logger.Info("manual recover mount failed", zap.String("output", string(out)))
+	filesystem, err := s.resolveFilesystemForDevice(raid, device)
+	if err != nil {
+		logger.Info("manual recover resolve filesystem failed", zap.String("device", device), zap.Error(err))
+		_ = s.updateRAIDState(id, "retrying")
+		s.startRetryWorker(id, raid.UUID)
+		return "retrying", nil
+	}
+
+	if err := mountRAIDDevice(device, raid.MountPoint, filesystem); err != nil {
+		if !strings.Contains(err.Error(), "already mounted") {
+			logger.Info("manual recover mount failed", zap.String("error", err.Error()))
 			_ = s.updateRAIDState(id, "retrying")
 			s.startRetryWorker(id, raid.UUID)
 			return "retrying", nil

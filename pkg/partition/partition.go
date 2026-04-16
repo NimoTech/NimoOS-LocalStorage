@@ -3,7 +3,9 @@ package partition
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/utils/command"
@@ -111,17 +113,33 @@ func CreatePartitionTable(rootDevice string) error {
 
 // partitionDevice - partition device, e.g. /dev/sda1
 func FormatPartition(partitionDevice string) error {
-	if _, err := command.ExecuteCommand(
-		"mkfs.ext4",
-		"-v",      // Verbose execution.
-		"-m", "1", // Specify  the  percentage of the file system blocks reserved for the super-user.
-		"-F",
-		partitionDevice,
-	); err != nil {
-		return err
-	}
+	return FormatDevice(partitionDevice, "ext4")
+}
 
-	return nil
+// FormatDevice formats a block device as the provided filesystem.
+// Supported filesystems: ext4, btrfs.
+func FormatDevice(device string, filesystem string) error {
+	fs := strings.TrimSpace(strings.ToLower(filesystem))
+	switch fs {
+	case "btrfs":
+		if _, err := command.ExecuteCommand("mkfs.btrfs", "-f", device); err != nil {
+			return fmt.Errorf("mkfs.btrfs: %w", err)
+		}
+		return nil
+	case "ext4", "":
+		if _, err := command.ExecuteCommand(
+			"mkfs.ext4",
+			"-v",      // Verbose execution.
+			"-m", "1", // Specify the percentage of file system blocks reserved for super-user.
+			"-F",
+			device,
+		); err != nil {
+			return fmt.Errorf("mkfs.ext4: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported filesystem: %s", filesystem)
+	}
 }
 
 // rootDevice - root device, e.g. /dev/sda

@@ -6,6 +6,7 @@ type RAIDArray struct {
 	ID          uint          `gorm:"primarykey" json:"id"`
 	Name        string        `json:"name"`
 	Level       int           `json:"level"`
+	Filesystem  string        `json:"filesystem"`
 	DevicePath  string        `json:"device_path"`
 	MountPoint  string        `json:"mount_point"`
 	UUID        string        `json:"uuid" gorm:"uniqueIndex"`

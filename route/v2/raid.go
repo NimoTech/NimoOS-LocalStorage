@@ -3,6 +3,7 @@ package v2
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/NimoTech/NimoOS-Common/model"
 	"github.com/NimoTech/NimoOS-Common/utils/common_err"
@@ -13,10 +14,11 @@ import (
 )
 
 type CreateRAIDRequest struct {
-	Name      string   `json:"name"`
-	Level     int      `json:"level"`
-	DiskPaths []string `json:"disk_paths"`
-	ChunkKB   int      `json:"chunk_kb"`
+	Name       string   `json:"name"`
+	Level      int      `json:"level"`
+	DiskPaths  []string `json:"disk_paths"`
+	ChunkKB    int      `json:"chunk_kb"`
+	Filesystem string   `json:"filesystem"`
 }
 
 type ReplaceDiskRequest struct {
@@ -53,7 +55,18 @@ func CreateRAIDArray(ctx echo.Context) error {
 		})
 	}
 
-	raid, err := service.MyService.RAID().CreateRAIDArray(req.Level, req.DiskPaths, req.Name, req.ChunkKB)
+	req.Filesystem = strings.TrimSpace(strings.ToLower(req.Filesystem))
+	if req.Filesystem != "" {
+		validFilesystems := map[string]bool{"ext4": true, "btrfs": true}
+		if !validFilesystems[req.Filesystem] {
+			return ctx.JSON(http.StatusBadRequest, model.Result{
+				Success: common_err.INVALID_PARAMS,
+				Message: "filesystem must be ext4 or btrfs",
+			})
+		}
+	}
+
+	raid, err := service.MyService.RAID().CreateRAIDArray(req.Level, req.DiskPaths, req.Name, req.ChunkKB, req.Filesystem)
 	if err != nil {
 		logger.Error("error when creating RAID array", zap.Error(err))
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
@@ -90,6 +103,22 @@ func GetRAIDStatus(ctx echo.Context) error {
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
 	}
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: status})
+}
+
+// GetRAIDUsage handles GET /v2/raid/:id/usage
+func GetRAIDUsage(ctx echo.Context) error {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
+	}
+
+	usage, err := service.MyService.RAID().GetRAIDUsage(uint(id))
+	if err != nil {
+		logger.Error("error when getting RAID usage", zap.Error(err), zap.Uint64("id", id))
+		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
+	}
+	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: usage})
 }
 
 // RecoverRAIDArray handles POST /v2/raid/:id/recover
