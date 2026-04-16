@@ -11,6 +11,9 @@ import (
 	"go.uber.org/zap"
 )
 
+const DefaultMdadmPath = "mdadm"
+var MdadmPath = "/home/nimo/NimoOS-dev/NimoOS-LocalStorage/bin/mdadm"
+
 // Create creates a new RAID array.
 // mdadm --create <device> --level=<level> --raid-devices=<n> [--chunk=<kb>] --run <members...>
 func Create(device string, level int, members []string, chunkKB int) error {
@@ -27,7 +30,7 @@ func Create(device string, level int, members []string, chunkKB int) error {
 	args = append(args, members...)
 
 	logger.Info("mdadm create", zap.String("device", device), zap.Int("level", level), zap.Strings("members", members))
-	out, err := exec.Command("mdadm", args...).CombinedOutput()
+	out, err := exec.Command(MdadmPath, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mdadm create %s: %w: %s", device, err, string(out))
 	}
@@ -37,7 +40,7 @@ func Create(device string, level int, members []string, chunkKB int) error {
 // Stop stops a RAID array: mdadm --stop <device>
 func Stop(device string) error {
 	logger.Info("mdadm stop", zap.String("device", device))
-	out, err := exec.Command("mdadm", "--stop", device).CombinedOutput()
+	out, err := exec.Command(MdadmPath, "--stop", device).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mdadm stop %s: %w: %s", device, err, string(out))
 	}
@@ -46,7 +49,7 @@ func Stop(device string) error {
 
 // Detail runs `mdadm --detail <device>` and parses output using ParseDetail from parse.go.
 func Detail(device string) (*ArrayDetail, error) {
-	out, err := exec.Command("mdadm", "--detail", device).CombinedOutput()
+	out, err := exec.Command(MdadmPath, "--detail", device).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("mdadm detail %s: %w: %s", device, err, string(out))
 	}
@@ -65,7 +68,7 @@ func ReadMDStat() ([]MDStatEntry, error) {
 // AddDisk adds a disk to array: mdadm <arrayDevice> --add <diskDevice>
 func AddDisk(arrayDevice, diskDevice string) error {
 	logger.Info("mdadm add disk", zap.String("array", arrayDevice), zap.String("disk", diskDevice))
-	out, err := exec.Command("mdadm", arrayDevice, "--add", diskDevice).CombinedOutput()
+	out, err := exec.Command(MdadmPath, arrayDevice, "--add", diskDevice).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mdadm add disk %s to %s: %w: %s", diskDevice, arrayDevice, err, string(out))
 	}
@@ -75,7 +78,7 @@ func AddDisk(arrayDevice, diskDevice string) error {
 // RemoveDisk marks faulty + removes: mdadm <arrayDevice> --fail <diskDevice> --remove <diskDevice>
 func RemoveDisk(arrayDevice, diskDevice string) error {
 	logger.Info("mdadm remove disk", zap.String("array", arrayDevice), zap.String("disk", diskDevice))
-	out, err := exec.Command("mdadm", arrayDevice, "--fail", diskDevice, "--remove", diskDevice).CombinedOutput()
+	out, err := exec.Command(MdadmPath, arrayDevice, "--fail", diskDevice, "--remove", diskDevice).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mdadm remove disk %s from %s: %w: %s", diskDevice, arrayDevice, err, string(out))
 	}
@@ -86,7 +89,7 @@ func RemoveDisk(arrayDevice, diskDevice string) error {
 // NOTE: may return non-zero if arrays already active — log but don't fail
 func AssembleScan() error {
 	logger.Info("mdadm assemble scan")
-	out, err := exec.Command("mdadm", "--assemble", "--scan").CombinedOutput()
+	out, err := exec.Command(MdadmPath, "--assemble", "--scan").CombinedOutput()
 	if err != nil {
 		logger.Info("mdadm assemble scan returned non-zero (arrays may already be active)", zap.String("output", string(out)))
 	}
@@ -96,7 +99,8 @@ func AssembleScan() error {
 // SaveConfig writes config: bash -c "mdadm --detail --scan > /etc/mdadm/mdadm.conf"
 func SaveConfig() error {
 	logger.Info("mdadm save config")
-	out, err := exec.Command("bash", "-c", "mdadm --detail --scan > /etc/mdadm/mdadm.conf").CombinedOutput()
+	command := fmt.Sprintf("%s --detail --scan > /etc/mdadm/mdadm.conf", MdadmPath)
+	out, err := exec.Command("bash", "-c", command).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to save mdadm config: %w\noutput: %s", err, string(out))
 	}
@@ -106,7 +110,7 @@ func SaveConfig() error {
 // ZeroSuperblock clears superblock: mdadm --zero-superblock <device>
 func ZeroSuperblock(device string) error {
 	logger.Info("mdadm zero superblock", zap.String("device", device))
-	out, err := exec.Command("mdadm", "--zero-superblock", device).CombinedOutput()
+	out, err := exec.Command(MdadmPath, "--zero-superblock", device).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mdadm zero-superblock %s: %w: %s", device, err, string(out))
 	}
@@ -150,4 +154,27 @@ func ParseLevelNumber(level string) (int, error) {
 		return 0, fmt.Errorf("invalid raid level name %q: %w", level, err)
 	}
 	return n, nil
+}
+
+// EnsureModuleLoaded attempts to load the necessary kernel modules (md_mod, raid0, etc.)
+func EnsureModuleLoaded(level int) error {
+	modules := []string{"md_mod"}
+	switch level {
+	case 0:
+		modules = append(modules, "raid0")
+	case 1:
+		modules = append(modules, "raid1")
+	case 5:
+		modules = append(modules, "raid5")
+	case 6:
+		modules = append(modules, "raid6")
+	}
+
+	for _, mod := range modules {
+		if out, err := exec.Command("modprobe", mod).CombinedOutput(); err != nil {
+			logger.Error("failed to load kernel module", zap.String("module", mod), zap.Error(err), zap.String("output", string(out)))
+			// We continue even if modprobe fails, as the module might be built-in or already loaded.
+		}
+	}
+	return nil
 }

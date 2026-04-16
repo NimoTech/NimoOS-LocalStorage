@@ -168,7 +168,12 @@ func minDisks(level int) (int, error) {
 // ---------------------------------------------------------------------------
 
 func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string) (*model.RAIDArray, error) {
-	// 0. Validate name and device paths.
+	// 0. Ensure RAID modules are loaded.
+	if err := mdadm.EnsureModuleLoaded(level); err != nil {
+		logger.Error("failed to ensure RAID modules are loaded (will attempt create anyway)", zap.Error(err))
+	}
+
+	// 1. Validate name and device paths.
 	if !validRAIDName.MatchString(name) {
 		return nil, fmt.Errorf("invalid RAID name: %q (only alphanumeric, hyphens, underscores allowed)", name)
 	}
@@ -633,6 +638,13 @@ func (s *raidService) RecoverOnBoot() error {
 				s.startRetryWorker(raid.ID, raid.UUID)
 				continue
 			}
+		}
+
+		// Make the mount root writable by all NimoOS users.
+		// The filesystem root is owned by root after a fresh mkfs; chmod 0777 so that
+		// the logged-in NimoOS user (e.g. admin) can create directories and migrate data.
+		if err := os.Chmod(raid.MountPoint, 0o777); err != nil {
+			logger.Error("chmod mount point failed", zap.String("mount", raid.MountPoint), zap.Error(err))
 		}
 
 		// Sync live state from mdadm.
