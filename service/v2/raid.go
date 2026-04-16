@@ -22,7 +22,7 @@ import (
 
 // RAIDService manages RAID array lifecycle.
 type RAIDService interface {
-	CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string) (*model.RAIDArray, error)
+	CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string, onStep func(int)) (*model.RAIDArray, error)
 	DeleteRAIDArray(id uint) error
 	GetRAIDStatus(id uint) (*RAIDStatus, error)
 	GetRAIDUsage(id uint) (*RAIDUsage, error)
@@ -169,7 +169,13 @@ func minDisks(level int) (int, error) {
 // CreateRAIDArray creates a new software RAID array.
 // ---------------------------------------------------------------------------
 
-func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string) (*model.RAIDArray, error) {
+func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string, onStep func(int)) (*model.RAIDArray, error) {
+	step := func(n int) {
+		if onStep != nil {
+			onStep(n)
+		}
+	}
+	step(1)
 	// 0. Ensure RAID modules are loaded.
 	if err := mdadm.EnsureModuleLoaded(level); err != nil {
 		logger.Error("failed to ensure RAID modules are loaded (will attempt create anyway)", zap.Error(err))
@@ -215,6 +221,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("find available md device: %w", err)
 	}
 
+	step(2)
 	// 4. Zero superblocks to clear any stale RAID metadata from previous attempts.
 	for _, dp := range diskPaths {
 		if err := mdadm.ZeroSuperblock(dp); err != nil {
@@ -222,6 +229,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		}
 	}
 
+	step(3)
 	// 5. Create the array.
 	if err := mdadm.Create(device, level, diskPaths, chunkKB); err != nil {
 		return nil, fmt.Errorf("create RAID array: %w", err)
@@ -233,6 +241,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("device %s did not appear: %w", device, err)
 	}
 
+	step(4)
 	// 7. Clear stale signatures then format with requested filesystem.
 	if err := wipeDeviceSignatures(device); err != nil {
 		_ = mdadm.Stop(device)
@@ -244,6 +253,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("format %s as %s: %w", device, fs, err)
 	}
 
+	step(5)
 	// 8. Create mount point and mount.
 	mountPoint := fmt.Sprintf("/media/RAID_%s", name)
 	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
@@ -307,6 +317,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("save RAID to db: %w", err)
 	}
 
+	step(6)
 	// 11. Save mdadm config for boot persistence.
 	if err := mdadm.SaveConfig(); err != nil {
 		logger.Error("failed to save mdadm config after create", zap.Error(err))

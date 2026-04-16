@@ -54,6 +54,8 @@ func InitRAIDRouter() http.Handler {
 		},
 	}))
 
+	raidGroup.GET("/tasks", v2.ListCreateTasks)
+	raidGroup.GET("/tasks/:task_id", v2.GetCreateTask)
 	raidGroup.GET("", v2.ListRAIDArrays)
 	raidGroup.POST("", v2.CreateRAIDArray)
 	raidGroup.DELETE("/:id", v2.DeleteRAIDArray)

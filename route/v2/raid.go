@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NimoTech/NimoOS-Common/model"
 	"github.com/NimoTech/NimoOS-Common/utils/common_err"
@@ -26,6 +27,48 @@ type ReplaceDiskRequest struct {
 	NewDiskPath string `json:"new_disk_path"`
 }
 
+// createStepNames maps step numbers to UI display text.
+// Defined here (route layer) so the service layer stays UI-agnostic.
+var createStepNames = map[int]string{
+	0: "",
+	1: "加载内核模块",
+	2: "清理磁盘超级块",
+	3: "创建 RAID 阵列",
+	4: "初始化文件系统",
+	5: "挂载阵列",
+	6: "保存配置",
+}
+
+// createStepProgress is the cumulative progress percentage when a step begins
+// (i.e. after all prior steps have completed).
+var createStepProgress = map[int]int{
+	1: 0, 2: 5, 3: 15, 4: 30, 5: 85, 6: 95,
+}
+
+func buildTaskResponse(t CreateTask) map[string]any {
+	stepName := createStepNames[t.Step]
+	if t.Step == 4 {
+		stepName = "初始化文件系统（" + t.Filesystem + "）"
+	}
+	if t.Status == "done" {
+		stepName = "完成"
+	}
+	return map[string]any{
+		"task_id":         t.TaskID,
+		"status":          t.Status,
+		"step":            t.Step,
+		"step_name":       stepName,
+		"progress":        t.Progress,
+		"elapsed_seconds": int(time.Since(t.StartTime).Seconds()),
+		"raid_id":         t.RaidID,
+		"error":           t.Error,
+		"name":            t.Name,
+		"level":           t.Level,
+		"filesystem":      t.Filesystem,
+		"disk_count":      t.DiskCount,
+	}
+}
+
 // ListRAIDArrays handles GET /v2/raid
 func ListRAIDArrays(ctx echo.Context) error {
 	raids, err := service.MyService.RAID().ListRAIDArrays()
@@ -37,6 +80,7 @@ func ListRAIDArrays(ctx echo.Context) error {
 }
 
 // CreateRAIDArray handles POST /v2/raid
+// Returns 202 immediately with a task_id; creation runs in a goroutine.
 func CreateRAIDArray(ctx echo.Context) error {
 	var req CreateRAIDRequest
 	if err := ctx.Bind(&req); err != nil {
@@ -66,12 +110,69 @@ func CreateRAIDArray(ctx echo.Context) error {
 		}
 	}
 
-	raid, err := service.MyService.RAID().CreateRAIDArray(req.Level, req.DiskPaths, req.Name, req.ChunkKB, req.Filesystem)
-	if err != nil {
-		logger.Error("error when creating RAID array", zap.Error(err))
-		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
+	// Normalise empty filesystem to default.
+	fs := req.Filesystem
+	if fs == "" {
+		fs = "btrfs"
 	}
-	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: raid})
+
+	// Atomic check-and-store: createLock ensures no TOCTOU race between
+	// checking for an existing task and writing the new one.
+	taskID := generateTaskID()
+	createLock.Lock()
+	if hasCreatingTask() {
+		createLock.Unlock()
+		return ctx.JSON(http.StatusConflict, model.Result{
+			Success: common_err.SERVICE_ERROR,
+			Message: "another array is being created",
+		})
+	}
+	storeTask(CreateTask{
+		TaskID:     taskID,
+		Status:     "creating",
+		StartTime:  time.Now(),
+		Name:       req.Name,
+		Level:      req.Level,
+		Filesystem: fs,
+		DiskCount:  len(req.DiskPaths),
+	})
+	createLock.Unlock()
+
+	onStep := func(step int) {
+		t, ok := loadTask(taskID)
+		if !ok {
+			return
+		}
+		t.Step = step
+		t.Progress = createStepProgress[step]
+		storeTask(t)
+	}
+
+	go func() {
+		result, err := service.MyService.RAID().CreateRAIDArray(
+			req.Level, req.DiskPaths, req.Name, req.ChunkKB, fs, onStep,
+		)
+		t, ok := loadTask(taskID)
+		if !ok {
+			return
+		}
+		if err != nil {
+			logger.Error("async RAID create failed", zap.String("task_id", taskID), zap.Error(err))
+			t.Status = "failed"
+			t.Error = err.Error()
+		} else {
+			t.Status = "done"
+			t.Progress = 100
+			t.RaidID = &result.ID
+		}
+		storeTask(t)
+		scheduleTaskCleanup(taskID)
+	}()
+
+	return ctx.JSON(http.StatusAccepted, map[string]string{
+		"task_id": taskID,
+		"status":  "creating",
+	})
 }
 
 // DeleteRAIDArray handles DELETE /v2/raid/:id
@@ -168,4 +269,27 @@ func ReplaceDisk(ctx echo.Context) error {
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
 	}
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS)})
+}
+
+// ListCreateTasks handles GET /v2/raid/tasks
+func ListCreateTasks(ctx echo.Context) error {
+	var tasks []map[string]any
+	taskStore.Range(func(_, v any) bool {
+		tasks = append(tasks, buildTaskResponse(v.(CreateTask)))
+		return true
+	})
+	if tasks == nil {
+		tasks = []map[string]any{}
+	}
+	return ctx.JSON(http.StatusOK, tasks)
+}
+
+// GetCreateTask handles GET /v2/raid/tasks/:task_id
+func GetCreateTask(ctx echo.Context) error {
+	taskID := ctx.Param("task_id")
+	t, ok := loadTask(taskID)
+	if !ok {
+		return ctx.JSON(http.StatusNotFound, map[string]string{"error": "task not found"})
+	}
+	return ctx.JSON(http.StatusOK, buildTaskResponse(t))
 }
