@@ -56,6 +56,7 @@ type Drive struct {
 	Model          string         `json:"model"`
 	Health         string         `json:"health"`
 	Temperature    int            `json:"temperature"`
+	PowerOnTime    int            `json:"power_on_time"`
 	DiskType       string         `json:"disk_type"`
 	NeedFormat     bool           `json:"need_format"`
 	Serial         string         `json:"serial"`
