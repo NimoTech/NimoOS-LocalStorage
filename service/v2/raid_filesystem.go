@@ -78,6 +78,22 @@ func wipeDeviceSignatures(device string) error {
 	return nil
 }
 
+// isAlreadyMounted returns true if device is already mounted at mountPoint.
+// Reads /proc/mounts directly to avoid any shell quoting issues.
+func isAlreadyMounted(device, mountPoint string) bool {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == device && fields[1] == mountPoint {
+			return true
+		}
+	}
+	return false
+}
+
 func mountRAIDDevice(device, mountPoint, filesystem string) error {
 	fs, err := normalizeStoredFilesystem(filesystem)
 	if err != nil {
@@ -87,6 +103,9 @@ func mountRAIDDevice(device, mountPoint, filesystem string) error {
 	case "btrfs":
 		return mountBtrfsDevice(device, mountPoint)
 	default:
+		if isAlreadyMounted(device, mountPoint) {
+			return nil
+		}
 		out, err := exec.Command("mount", device, mountPoint).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("mount %s on %s: %w: %s", device, mountPoint, err, strings.TrimSpace(string(out)))
@@ -96,6 +115,10 @@ func mountRAIDDevice(device, mountPoint, filesystem string) error {
 }
 
 func mountBtrfsDevice(device, mountPoint string) error {
+	if isAlreadyMounted(device, mountPoint) {
+		return nil
+	}
+
 	baseOpts := "space_cache=v2,noatime,compress=zstd:1"
 	primaryOpts := baseOpts + ",subvol=@"
 

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/NimoTech/NimoOS-Common/model"
@@ -108,7 +109,7 @@ func GetStorageList(ctx echo.Context) error {
 			}
 			if len(blkChild.Label) == 0 {
 				if stor.MountPoint == "/" {
-					stor.Label = "System"
+					stor.Label = "NimoOS-HD"
 				} else {
 					stor.Label = filepath.Base(stor.MountPoint)
 				}
@@ -128,13 +129,31 @@ func GetStorageList(ctx echo.Context) error {
 		}
 
 		if tempSystemDisk && len(system) > 0 {
-			tempStorageArr := []model1.Storage{}
+			// Find root partition entry
+			var rootStorage model1.Storage
 			for i := 0; i < len(storageArr); i++ {
-				if storageArr[i].MountPoint != "/boot/efi" && storageArr[i].Type != "swap" {
-					tempStorageArr = append(tempStorageArr, storageArr[i])
+				if storageArr[i].MountPoint == "/" {
+					rootStorage = storageArr[i]
+					break
 				}
 			}
-			tempDisk.Children = tempStorageArr
+			// Sum used space across all partitions to calculate whole-disk available
+			var totalUsed uint64
+			for _, s := range storageArr {
+				sizeVal, _ := strconv.ParseUint(s.Size, 10, 64)
+				availVal, _ := strconv.ParseUint(s.Avail, 10, 64)
+				if sizeVal > availVal {
+					totalUsed += sizeVal - availVal
+				}
+			}
+			diskSize := currentDisk.Size
+			diskAvail := uint64(0)
+			if diskSize > totalUsed {
+				diskAvail = diskSize - totalUsed
+			}
+			rootStorage.Size = strconv.FormatUint(diskSize, 10)
+			rootStorage.Avail = strconv.FormatUint(diskAvail, 10)
+			tempDisk.Children = []model1.Storage{rootStorage}
 			storages = append(storages, tempDisk)
 		} else if !tempSystemDisk {
 			tempDisk.Children = storageArr
