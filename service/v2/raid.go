@@ -160,6 +160,8 @@ func minDisks(level int) (int, error) {
 		return 3, nil
 	case 6:
 		return 4, nil
+	case 10:
+		return 4, nil
 	default:
 		return 0, fmt.Errorf("unsupported RAID level: %d", level)
 	}
@@ -707,6 +709,8 @@ func parseRAIDLevel(levelStr string) int {
 		return 5
 	case "raid6":
 		return 6
+	case "raid10":
+		return 10
 	default:
 		return 0
 	}
