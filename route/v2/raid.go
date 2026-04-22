@@ -116,6 +116,13 @@ func CreateRAIDArray(ctx echo.Context) error {
 		fs = "btrfs"
 	}
 
+	if req.Level == 10 && len(req.DiskPaths)%2 != 0 {
+		return ctx.JSON(http.StatusBadRequest, model.Result{
+			Success: common_err.INVALID_PARAMS,
+			Message: "RAID 10 requires an even number of disks",
+		})
+	}
+
 	// Atomic check-and-store: createLock ensures no TOCTOU race between
 	// checking for an existing task and writing the new one.
 	taskID := generateTaskID()
