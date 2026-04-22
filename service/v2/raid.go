@@ -280,9 +280,10 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		_ = mdadm.Stop(device)
 		return nil, fmt.Errorf("mount %s on %s: %w", device, mountPoint, err)
 	}
-	if fs == "btrfs" {
-		applyNoCoWPolicy(mountPoint)
-	}
+	// 取消给btrfs添加no_cow_policy的文件夹
+	// if fs == "btrfs" {
+	// 	applyNoCoWPolicy(mountPoint)
+	// }
 
 	// 9. Get UUID from mdadm detail.
 	detail, err := mdadm.Detail(device)
