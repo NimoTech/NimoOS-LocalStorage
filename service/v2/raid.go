@@ -212,6 +212,10 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		return nil, fmt.Errorf("RAID%d requires at least %d disks, got %d", level, min, len(diskPaths))
 	}
 
+	if level == 10 && len(diskPaths)%2 != 0 {
+		return nil, fmt.Errorf("RAID 10 requires an even number of disks, got %d", len(diskPaths))
+	}
+
 	// 2. Default chunk size.
 	if chunkKB <= 0 {
 		chunkKB = 512

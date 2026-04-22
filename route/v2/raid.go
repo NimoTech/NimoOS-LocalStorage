@@ -91,11 +91,11 @@ func CreateRAIDArray(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
 	}
 
-	validLevels := map[int]bool{0: true, 1: true, 5: true, 6: true}
+	validLevels := map[int]bool{0: true, 1: true, 5: true, 6: true, 10: true}
 	if !validLevels[req.Level] {
 		return ctx.JSON(http.StatusBadRequest, model.Result{
 			Success: common_err.INVALID_PARAMS,
-			Message: "level must be 0, 1, 5, or 6",
+			Message: "level must be 0, 1, 5, 6, or 10",
 		})
 	}
 
