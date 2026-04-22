@@ -179,6 +179,8 @@ func EnsureModuleLoaded(level int) error {
 		modules = append(modules, "raid5")
 	case 6:
 		modules = append(modules, "raid6")
+	case 10:
+		modules = append(modules, "raid10")
 	}
 
 	for _, mod := range modules {
