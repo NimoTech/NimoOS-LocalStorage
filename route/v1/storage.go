@@ -256,6 +256,19 @@ func PostAddStorage(ctx echo.Context) error {
 	for _, blkChild := range currentDisk.Children {
 
 		mountPoint := blkChild.GetMountPoint(name)
+
+		// If the partition was auto-mounted (e.g. at /mnt/Disk-*), unmount it first
+		// so it can be re-mounted at the proper /media/... path.
+		if blkChild.MountPoint != "" && blkChild.MountPoint != mountPoint {
+			if err := service.MyService.Disk().UmountPointAndRemoveDir(blkChild); err != nil {
+				logger.Error("failed to unmount existing auto-mount before re-mounting", zap.Error(err), zap.String("existing", blkChild.MountPoint))
+				message += blkChild.Path + "\n"
+				continue
+			}
+			_ = service.MyService.Disk().DeleteMountPointFromDB(blkChild.Path, blkChild.MountPoint)
+			blkChild.MountPoint = ""
+		}
+
 		// mount disk
 		if output, err := service.MyService.Disk().MountDisk(blkChild.Path, mountPoint); err != nil {
 			logger.Error("err", zap.Error(err), zap.String("mountPoint", mountPoint), zap.String("output", output))

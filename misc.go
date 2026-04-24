@@ -38,26 +38,6 @@ func sendDiskBySocket() {
 			}
 		}
 		
-		isSystemDisk := false
-		if len(currentDisk.Children) > 0 {
-			for _, v := range currentDisk.Children {
-				if v.MountPoint == "/" {
-					isSystemDisk = true
-					break
-				}
-				for _, child := range v.Children {
-					if child.MountPoint == "/" {
-						isSystemDisk = true
-						break
-					}
-				}
-			}
-		} else {
-			if currentDisk.MountPoint == "/" {
-				isSystemDisk = true
-			}
-		}
-
 		if len(currentDisk.Children) > 0 {
 			for _, v := range currentDisk.Children {
 				if len(v.MountPoint) == 0 {
@@ -71,7 +51,7 @@ func sendDiskBySocket() {
 				a, _ := strconv.ParseUint(v.FSAvail.String(), 10, 64)
 				u, _ := strconv.ParseUint(v.FSUsed.String(), 10, 64)
 				
-				if isSystemDisk && s > a {
+				if s > a {
 					u = s - a
 				}
 				
@@ -91,7 +71,7 @@ func sendDiskBySocket() {
 			a, _ := strconv.ParseUint(currentDisk.FSAvail.String(), 10, 64)
 			u, _ := strconv.ParseUint(currentDisk.FSUsed.String(), 10, 64)
 			
-			if isSystemDisk && s > a {
+			if s > a {
 				u = s - a
 			}
 			
