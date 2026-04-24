@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -526,8 +525,24 @@ func (d *diskService) CheckSerialDiskMount() {
 			// mount point check
 			mountPoint := m
 			mount.UmountByMountPoint(m)
-			dir, _ := ioutil.ReadDir(m)
-			if len(dir) > 0 {
+			// Only divert to a suffixed path if the mount point is occupied by a
+			// *different* active mount (i.e. another device is already mounted there).
+			// A non-empty directory on the underlying filesystem is not a conflict —
+			// it is normal for mount point directories to retain content when nothing
+			// is mounted on them, and blindly suffixing the path would create a
+			// broken symlink for any migrated AppData/Images/UserData that points to m.
+			isMountedElsewhere := false
+			if mounts, err := mountinfo.GetMounts(func(i *mountinfo.Info) (bool, bool) {
+				return false, false
+			}); err == nil {
+				for _, mi := range mounts {
+					if mi.Mountpoint == m {
+						isMountedElsewhere = true
+						break
+					}
+				}
+			}
+			if isMountedElsewhere {
 				i := 1
 				for {
 					mountPoint = m + "-" + strconv.Itoa(i)
@@ -536,7 +551,7 @@ func (d *diskService) CheckSerialDiskMount() {
 					}
 					i++
 				}
-				logger.Info("mount point already exists, using new mount point", zap.String("path", blkChild.Path), zap.String("mount point", mountPoint))
+				logger.Info("mount point occupied, using new mount point", zap.String("path", blkChild.Path), zap.String("mount point", mountPoint))
 			}
 
 			if output, err := d.MountDisk(blkChild.Path, mountPoint); err != nil {

@@ -31,12 +31,33 @@ func sendDiskBySocket() {
 		if reflect.DeepEqual(temp, model.SmartctlA{}) {
 			healthy = true
 		} else {
-			if len(temp.ModelName) > 0 {
+		if len(temp.ModelName) > 0 {
 				healthy = temp.SmartStatus.Passed
 			} else {
 				healthy = true
 			}
 		}
+		
+		isSystemDisk := false
+		if len(currentDisk.Children) > 0 {
+			for _, v := range currentDisk.Children {
+				if v.MountPoint == "/" {
+					isSystemDisk = true
+					break
+				}
+				for _, child := range v.Children {
+					if child.MountPoint == "/" {
+						isSystemDisk = true
+						break
+					}
+				}
+			}
+		} else {
+			if currentDisk.MountPoint == "/" {
+				isSystemDisk = true
+			}
+		}
+
 		if len(currentDisk.Children) > 0 {
 			for _, v := range currentDisk.Children {
 				if len(v.MountPoint) == 0 {
@@ -49,6 +70,11 @@ func sendDiskBySocket() {
 				s, _ := strconv.ParseUint(v.FSSize.String(), 10, 64)
 				a, _ := strconv.ParseUint(v.FSAvail.String(), 10, 64)
 				u, _ := strconv.ParseUint(v.FSUsed.String(), 10, 64)
+				
+				if isSystemDisk && s > a {
+					u = s - a
+				}
+				
 				status.Size += s
 				status.Avail += a
 				status.Used += u
@@ -64,6 +90,11 @@ func sendDiskBySocket() {
 			s, _ := strconv.ParseUint(currentDisk.FSSize.String(), 10, 64)
 			a, _ := strconv.ParseUint(currentDisk.FSAvail.String(), 10, 64)
 			u, _ := strconv.ParseUint(currentDisk.FSUsed.String(), 10, 64)
+			
+			if isSystemDisk && s > a {
+				u = s - a
+			}
+			
 			status.Size += s
 			status.Avail += a
 			status.Used += u
