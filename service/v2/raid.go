@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -344,9 +345,31 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		return fmt.Errorf("get RAID array: %w", err)
 	}
 
-	// 2. Unmount and remove mount directory.
-	// We DO NOT use lazy unmount (-l) because it hides the busy state from umount,
+	// 2. Refuse if this RAID still hosts a system data location (Docker
+	// images, app data, user database). Those are managed by NimoOS path
+	// migration and must be moved off the RAID before it can be deleted.
+	if items := detectSystemPathsOnRAID(raid.MountPoint); len(items) > 0 {
+		return fmt.Errorf("%s", formatSystemPathConflict(raid.MountPoint, items))
+	}
+
+	// 3. Unmount and remove mount directory.
+	// Submounts (e.g. orphan Docker/containerd overlays left over from an
+	// earlier path migration) keep the parent mount busy. We unmount the
+	// deepest first so each parent becomes free before we get to it. We DO
+	// NOT use lazy unmount (-l) because it hides the busy state from umount
 	// but leaves the block device open, causing mdadm.Stop to fail later.
+	if children := collectChildMounts(raid.MountPoint); len(children) > 0 {
+		// Sort by descending depth so /a/b/c is unmounted before /a/b.
+		sort.Slice(children, func(i, j int) bool {
+			return strings.Count(children[i], "/") > strings.Count(children[j], "/")
+		})
+		for _, child := range children {
+			if outUmount, errUmount := exec.Command("umount", child).CombinedOutput(); errUmount != nil {
+				return fmt.Errorf("%s", formatBusyErrorForSubmount(raid.MountPoint, child, string(outUmount)))
+			}
+		}
+	}
+
 	for _, target := range []string{raid.MountPoint, raid.DevicePath} {
 		// Search with space boundaries to avoid matching /dev/md01 when looking for /dev/md0
 		grepCmd := fmt.Sprintf("grep ' %s ' /proc/mounts || grep '^%s ' /proc/mounts", target, target)
@@ -357,25 +380,12 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 
 		// Attempt to unmount normally.
 		if outUmount, errUmount := exec.Command("umount", target).CombinedOutput(); errUmount != nil {
-			busyInfo := ""
-
-			// Try to find what is occupying the target
-			lsofArg := target
-			if stat, err := os.Stat(target); err == nil && stat.IsDir() {
-				lsofArg = "+D " + target
-			}
-
-			lsofCmd := exec.Command("sh", "-c", fmt.Sprintf("lsof %s 2>/dev/null || true", lsofArg))
-			if lsofOut, _ := lsofCmd.CombinedOutput(); len(strings.TrimSpace(string(lsofOut))) > 0 {
-				busyInfo = fmt.Sprintf("\nBusy processes:\n%s", string(lsofOut))
-			}
-
-			return fmt.Errorf("failed to unmount %s: %s (target is busy)%s", target, strings.TrimSpace(string(outUmount)), busyInfo)
+			return fmt.Errorf("%s", formatBusyError(target, string(outUmount)))
 		}
 	}
 	_ = os.Remove(raid.MountPoint)
 
-	// 3. Deactivate any LVM volume group that uses this device as a PV.
+	// 4. Deactivate any LVM volume group that uses this device as a PV.
 	// pvs exits 5 when the device isn't a PV, so we check stdout instead.
 	if pvOut, _ := exec.Command("pvs", "--noheadings", "-o", "vg_name", raid.DevicePath).CombinedOutput(); len(strings.TrimSpace(string(pvOut))) > 0 {
 		vgName := strings.TrimSpace(string(pvOut))
@@ -385,7 +395,7 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		}
 	}
 
-	// 4. Stop the array.
+	// 5. Stop the array.
 	// Log current mount state to help diagnose if stop still fails.
 	if out, err := exec.Command("grep", raid.DevicePath, "/proc/mounts").CombinedOutput(); err == nil && len(out) > 0 {
 		logger.Info("device still in /proc/mounts before stop", zap.String("device", raid.DevicePath), zap.String("mounts", string(out)))
@@ -402,7 +412,7 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		logger.Info("device already missing or not an md device, continuing with deletion", zap.String("device", raid.DevicePath))
 	}
 
-	// 5. Zero superblock on each member disk.
+	// 6. Zero superblock on each member disk.
 	// Resolve current path before zeroing; warn if disk is offline (can't zero).
 	for _, member := range raid.MemberDisks {
 		ids := diskid.DiskIdentifiers{
@@ -422,7 +432,7 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		}
 	}
 
-	// 6. Delete from DB.
+	// 7. Delete from DB.
 	if err := s.deleteRAID(id); err != nil {
 		return fmt.Errorf("delete RAID from db: %w", err)
 	}
