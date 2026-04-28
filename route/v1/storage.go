@@ -81,7 +81,8 @@ func GetStorageList(ctx echo.Context) error {
 				continue
 			}
 			if !foundSystem {
-				if blkChild.MountPoint == "/" {
+				mp := blkChild.MountPoint
+				if mp == "/" || mp == "/mnt/overlay" || mp == "/media/root-ro" {
 					tempDisk.DiskName = "System"
 					foundSystem = true
 					tempSystemDisk = true
@@ -129,22 +130,28 @@ func GetStorageList(ctx echo.Context) error {
 		}
 
 		if tempSystemDisk && len(system) > 0 {
-			// Find root partition entry
+			// Find root partition entry, with overlayroot fallback
 			var rootStorage model1.Storage
 			for i := 0; i < len(storageArr); i++ {
-				if storageArr[i].MountPoint == "/" {
+				mp := storageArr[i].MountPoint
+				if mp == "/" {
 					rootStorage = storageArr[i]
 					break
 				}
+				if mp == "/media/root-ro" || mp == "/mnt/overlay" {
+					rootStorage = storageArr[i]
+				}
 			}
-			// Sum used space across all partitions to calculate whole-disk available
+			rootStorage.Label = "NimoOS-HD"
+			// Normalize to "/" so that frontend path-prefix matching works regardless
+			// of whether the system uses overlayfs (/media/root-ro, /mnt/overlay, etc.)
+			rootStorage.MountPoint = "/"
+			// Sum FSUsed across all partitions — consistent with how standalone
+			// partitions report used space (no reserved-block overcounting).
 			var totalUsed uint64
 			for _, s := range storageArr {
-				sizeVal, _ := strconv.ParseUint(s.Size, 10, 64)
-				availVal, _ := strconv.ParseUint(s.Avail, 10, 64)
-				if sizeVal > availVal {
-					totalUsed += sizeVal - availVal
-				}
+				usedVal, _ := strconv.ParseUint(s.Used, 10, 64)
+				totalUsed += usedVal
 			}
 			diskSize := currentDisk.Size
 			diskAvail := uint64(0)
@@ -153,6 +160,7 @@ func GetStorageList(ctx echo.Context) error {
 			}
 			rootStorage.Size = strconv.FormatUint(diskSize, 10)
 			rootStorage.Avail = strconv.FormatUint(diskAvail, 10)
+			rootStorage.Used = strconv.FormatUint(totalUsed, 10)
 			tempDisk.Children = []model1.Storage{rootStorage}
 			storages = append(storages, tempDisk)
 		} else if !tempSystemDisk {

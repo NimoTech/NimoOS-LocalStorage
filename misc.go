@@ -50,11 +50,9 @@ func sendDiskBySocket() {
 				s, _ := strconv.ParseUint(v.FSSize.String(), 10, 64)
 				a, _ := strconv.ParseUint(v.FSAvail.String(), 10, 64)
 				u, _ := strconv.ParseUint(v.FSUsed.String(), 10, 64)
-				
-				if s > a {
+				if u == 0 && s > a {
 					u = s - a
 				}
-				
 				status.Size += s
 				status.Avail += a
 				status.Used += u
@@ -70,8 +68,7 @@ func sendDiskBySocket() {
 			s, _ := strconv.ParseUint(currentDisk.FSSize.String(), 10, 64)
 			a, _ := strconv.ParseUint(currentDisk.FSAvail.String(), 10, 64)
 			u, _ := strconv.ParseUint(currentDisk.FSUsed.String(), 10, 64)
-			
-			if s > a {
+			if u == 0 && s > a {
 				u = s - a
 			}
 			
