@@ -1,7 +1,7 @@
 package common
 
 const (
-	Version           = "0.4.4"
+	Version           = "1.9.0-alpha1"
 	ServiceName       = "local-storage"
 	DefaultMountPoint = "/DATA"
 )
