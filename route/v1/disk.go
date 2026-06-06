@@ -11,6 +11,7 @@ import (
 	"github.com/NimoTech/NimoOS-Common/utils/logger"
 	"github.com/NimoTech/NimoOS-LocalStorage/common"
 	model1 "github.com/NimoTech/NimoOS-LocalStorage/model"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/hwmon"
 	"github.com/NimoTech/NimoOS-LocalStorage/service"
 	"github.com/labstack/echo/v4"
 	"github.com/shirou/gopsutil/v3/disk"
@@ -100,6 +101,12 @@ func GetDiskList(ctx echo.Context) error {
 		temp := service.MyService.Disk().SmartCTL(currentDisk.Path)
 		disk.Temperature = temp.Temperature.Current
 		disk.PowerOnTime = temp.PowerOnTime.Hours
+
+		// SmartCTL result above may be cached; hwmon (drivetemp/nvme) is a
+		// live sysfs read and does not wake a disk from standby
+		if t, ok := hwmon.DriveTemperature(currentDisk.Name); ok {
+			disk.Temperature = t
+		}
 
 		if systemDisk == nil {
 			// go 5 level deep to look for system block device by mount point being "/"

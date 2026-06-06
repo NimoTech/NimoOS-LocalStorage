@@ -110,7 +110,9 @@ func (d *diskService) SmartCTL(path string) model.SmartctlA {
 		// logger.Error("failed to unmarshal json", zap.Error(err), zap.String("json", string(buf)))
 	}
 	if !reflect.DeepEqual(m, model.SmartctlA{}) {
-		if err := Cache.Add(key, m, time.Hour*24); err != nil {
+		// 5 minutes instead of 24h: temperature lives in this blob and must
+		// stay reasonably fresh; smartctl -n standby will not wake disks
+		if err := Cache.Add(key, m, time.Minute*5); err != nil {
 			// logger.Error("failed to add cache", zap.Error(err), zap.String("key", key))
 		}
 	}
