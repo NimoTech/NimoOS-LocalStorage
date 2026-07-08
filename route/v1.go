@@ -6,7 +6,9 @@ import (
 	"strconv"
 
 	"github.com/NimoTech/NimoOS-Common/external"
+	"github.com/NimoTech/NimoOS-Common/middleware"
 	"github.com/NimoTech/NimoOS-Common/utils/jwt"
+	"github.com/NimoTech/NimoOS-LocalStorage/common"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/config"
 	v1 "github.com/NimoTech/NimoOS-LocalStorage/route/v1"
 	"github.com/labstack/echo/v4"
@@ -30,6 +32,8 @@ func InitV1Router() http.Handler {
 	e.Use(echo_middleware.Logger())
 
 	// r.GET("/v1/recover/:type", v1.GetRecoverStorage)
+	middleware.RegisterVersionRoute(e, "/v1/storage/version", "Local Storage", common.Version)
+
 	v1Group := e.Group("/v1")
 
 	v1Group.Use(echo_middleware.JWTWithConfig(echo_middleware.JWTConfig{
