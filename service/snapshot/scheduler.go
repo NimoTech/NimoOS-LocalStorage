@@ -270,9 +270,18 @@ func (s *Scheduler) createDue(ctx context.Context, v VolumeInfo, policy model.Sn
 			// skip protecting the volume with a snapshot — the space guard
 			// exists to protect free space, not to gate the feature's
 			// primary purpose on a secondary signal.
+			//
+			// Deliberately NOT calling resolvePause here: a usage query is
+			// most likely to error exactly when the filesystem is
+			// critically full/damaged — the moment an existing,
+			// data-backed pause verdict matters most. Wiping that pause
+			// (and resetting its 24h alert throttle window) on a mere
+			// query error, rather than a confirmed recovery, would let a
+			// transient query hiccup erase a real "this volume is full"
+			// signal. So on error we leave PauseState exactly as it was
+			// and still fall through to attempt creation (fail-open).
 			logger.Info("snapshot scheduler: usage check failed, proceeding without space guard",
 				zap.String("volume_uuid", v.UUID), zap.Error(err))
-			s.resolvePause(v.UUID)
 		} else if pct > float64(threshold) {
 			s.pause(v.UUID, fmt.Sprintf("volume usage %.1f%% exceeds pause threshold %d%%", pct, threshold), now)
 			return

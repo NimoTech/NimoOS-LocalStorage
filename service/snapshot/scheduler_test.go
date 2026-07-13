@@ -10,6 +10,10 @@ import (
 	"github.com/NimoTech/NimoOS-LocalStorage/service/model"
 )
 
+// errFakeUsageQuery simulates a space-guard usage query failure (e.g. the
+// filesystem is critically full/damaged and can't report free space).
+var errFakeUsageQuery = errors.New("fake usage query error")
+
 // volumeBox is a concurrency-safe mutable slot for the volumes a test's
 // VolumeListerFunc returns, letting a test simulate hot-plug (change what's
 // "currently enumerated" between RunOnce calls) without any caching on the
@@ -435,6 +439,89 @@ func TestSchedulerPauseThresholdClampedWhenPolicyCorrupt(t *testing.T) {
 	}
 	if len(runner.CreatedSnapshots) != 3 {
 		t.Fatalf("expected creation to proceed normally, got %d", len(runner.CreatedSnapshots))
+	}
+}
+
+func TestSchedulerUsageQueryErrorDoesNotClearExistingPause(t *testing.T) {
+	now := mustTime(t, "2026-07-12T10:00:00Z")
+	clock := NewFakeClock(now)
+	sched, runner, store, usage, publisher, box := newTestScheduler(t, clock)
+
+	vol := schedTestVolume(t)
+	enableAndMount(t, runner, store, vol, 24, 7, 4, 90)
+	box.Set(vol)
+	usage.SetPercent(vol.UUID, 95.0) // over the 90% threshold
+
+	sched.RunOnce(context.Background())
+	if reason := sched.Pause.Reason(vol.UUID); reason == "" {
+		t.Fatalf("expected a real pause to be established before the usage query starts erroring")
+	}
+	if len(runner.CreatedSnapshots) != 0 {
+		t.Fatalf("expected no creation while genuinely paused, got %+v", runner.CreatedSnapshots)
+	}
+	if publisher.CountByName(EventSnapshotPaused) != 1 {
+		t.Fatalf("expected exactly 1 paused event so far, got %d", publisher.CountByName(EventSnapshotPaused))
+	}
+
+	// Now the usage query starts erroring (e.g. the filesystem is critically
+	// full/damaged — exactly when the guard matters most). The scheduler
+	// must fail open (still attempt creation) WITHOUT wiping the
+	// data-backed pause verdict or resetting its 24h alert throttle window.
+	usage.Err[vol.UUID] = errFakeUsageQuery
+	clock.Advance(time.Minute)
+	sched.RunOnce(context.Background())
+
+	if reason := sched.Pause.Reason(vol.UUID); reason == "" {
+		t.Fatalf("expected the existing real pause to survive a usage-query error, got cleared")
+	}
+	if len(runner.CreatedSnapshots) != 3 {
+		t.Fatalf("expected fail-open creation to still proceed despite the usage-query error, got %d", len(runner.CreatedSnapshots))
+	}
+	// The throttle window must not have been reset either: a paused event
+	// fired minutes ago must still be suppressed.
+	if publisher.CountByName(EventSnapshotPaused) != 1 {
+		t.Fatalf("expected paused event count to stay throttled at 1 (window must survive the query error), got %d", publisher.CountByName(EventSnapshotPaused))
+	}
+
+	// Usage recovers below threshold on a later tick: normal resume path
+	// still works (pause clears, and a subsequent re-pause fires a fresh
+	// event because recovery reset the throttle window as designed).
+	delete(usage.Err, vol.UUID)
+	usage.SetPercent(vol.UUID, 40.0)
+	clock.Advance(time.Minute)
+	sched.RunOnce(context.Background())
+	if reason := sched.Pause.Reason(vol.UUID); reason != "" {
+		t.Fatalf("expected pause to clear once usage genuinely recovers, got reason=%q", reason)
+	}
+
+	usage.SetPercent(vol.UUID, 95.0)
+	clock.Advance(time.Minute)
+	sched.RunOnce(context.Background())
+	if publisher.CountByName(EventSnapshotPaused) != 2 {
+		t.Fatalf("expected a fresh paused event after genuine recovery reset the throttle, got %d", publisher.CountByName(EventSnapshotPaused))
+	}
+}
+
+func TestSchedulerUsageQueryErrorWithNoExistingPauseCreatesWithoutChurn(t *testing.T) {
+	now := mustTime(t, "2026-07-12T10:00:00Z")
+	clock := NewFakeClock(now)
+	sched, runner, store, usage, publisher, box := newTestScheduler(t, clock)
+
+	vol := schedTestVolume(t)
+	enableAndMount(t, runner, store, vol, 24, 7, 4, 90)
+	box.Set(vol)
+	usage.Err[vol.UUID] = errFakeUsageQuery
+
+	sched.RunOnce(context.Background())
+
+	if reason := sched.Pause.Reason(vol.UUID); reason != "" {
+		t.Fatalf("expected no pause to be created from a mere usage-query error, got reason=%q", reason)
+	}
+	if len(runner.CreatedSnapshots) != 3 {
+		t.Fatalf("expected fail-open creation to proceed (all 3 bootstrap cadences due), got %d", len(runner.CreatedSnapshots))
+	}
+	if publisher.CountByName(EventSnapshotPaused) != 0 {
+		t.Fatalf("expected no paused event churn when there was never a real pause, got %d", publisher.CountByName(EventSnapshotPaused))
 	}
 }
 
