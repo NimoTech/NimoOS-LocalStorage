@@ -242,6 +242,54 @@ func TestRestoreRejectsSymlinkEscapeInSnapshot(t *testing.T) {
 	}
 }
 
+// TestRestoreRejectsSymlinkEscapeInLiveVolume is the mirror image of
+// TestRestoreRejectsSymlinkEscapeInSnapshot: every other symlink-escape test
+// in this package places the malicious link on the snapshot/base side. This
+// one places it on the LIVE VOLUME side instead — destParentRel's own path
+// resolution (restore.go's second resolveWithinDir call, against liveBase)
+// must independently reject it, closing that test gap.
+func TestRestoreRejectsSymlinkEscapeInLiveVolume(t *testing.T) {
+	f := newRestoreFixture(t)
+	// The source exists inside the snapshot, so Restore gets past the
+	// source-exists check and actually reaches the live-volume-side path
+	// validation this test is targeting.
+	if err := os.MkdirAll(filepath.Join(f.snapDir, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.snapDir, "nested", "secret.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// In the LIVE volume (not the snapshot), "nested" is a symlink escaping
+	// outside the mount point.
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(f.volume.MountPoint, "nested")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "nested/secret.txt")
+	if !errors.Is(err, ErrInvalidRestorePath) {
+		t.Fatalf("expected ErrInvalidRestorePath for a live-volume symlink escape, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt for a live-volume symlink escape, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreRejectsPathDot proves relPath="." (meaning "restore the entire
+// volume root") is rejected outright rather than producing the degenerate
+// "..restored-<ts>" destination (filepath.Base(".") == ".") that would copy
+// the whole snapshot into a folder inside its own live volume root.
+func TestRestoreRejectsPathDot(t *testing.T) {
+	f := newRestoreFixture(t)
+	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, ".")
+	if !errors.Is(err, ErrInvalidRestorePath) {
+		t.Fatalf("expected ErrInvalidRestorePath for path \".\", got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt for path \".\", got %+v", f.copier.Calls)
+	}
+}
+
 func TestRestoreSourceNotFoundInsideSnapshot(t *testing.T) {
 	f := newRestoreFixture(t)
 	// snapDir exists (it's a real directory) but "missing.txt" was never
@@ -297,6 +345,28 @@ func TestRestoreFallsBackWhenReflinkFails(t *testing.T) {
 	}
 	if len(f.copier.Calls) != 1 || f.copier.Calls[0].Reflink {
 		t.Fatalf("expected 1 fallback (non-reflink) call, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestorePropagatesDestinationExistsErrorFromCopier proves Restore
+// surfaces ErrRestoreDestinationExists (rather than reporting success, or an
+// opaque error) when the Copier reports the destination collided — the
+// retryable outcome of the TOCTOU race between computeRestoreDestination's
+// Exists check and Copy's actual write (fixed in copy.go: ExecCopier now
+// detects this itself against the real filesystem; here we simulate the
+// same signal through FakeCopier to prove the service layer's contract).
+func TestRestorePropagatesDestinationExistsErrorFromCopier(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(f.volume.MountPoint, "report.docx.restored-20260713T120000Z")
+	f.copier.ReflinkErr[dest] = ErrRestoreDestinationExists
+	f.copier.FallbackErr[dest] = ErrRestoreDestinationExists
+
+	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "report.docx")
+	if !errors.Is(err, ErrRestoreDestinationExists) {
+		t.Fatalf("expected ErrRestoreDestinationExists, got %v", err)
 	}
 }
 

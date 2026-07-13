@@ -3,6 +3,7 @@ package snapshot
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -21,11 +22,21 @@ type Copier interface {
 	// Copy copies src to dest, preferring a reflink (copy-on-write) copy
 	// and falling back to a plain deep copy if that fails — handoff §3.4:
 	// "cp -a --reflink=always <snap>/<path> <live>/<path>.restored-<ts>;
-	// reflink 失败(理论同盘不该发生)回退普通 cp -a". Copy does not check
-	// whether dest already exists; callers (computeRestoreDestination) are
-	// responsible for choosing a destination that doesn't collide, so this
-	// never overwrites anything by construction rather than by a check
-	// here that could race.
+	// reflink 失败(理论同盘不该发生)回退普通 cp -a".
+	//
+	// Copy DOES check whether dest already exists, both itself (an
+	// explicit stat immediately before shelling out) and via the
+	// underlying `cp` invocation's own no-clobber flags, and returns
+	// ErrRestoreDestinationExists instead of silently skipping or
+	// overwriting if it does. This existence check is deliberately not
+	// left to callers: computeRestoreDestination choosing a destination
+	// that's free *at the moment it checked* is necessary but not
+	// sufficient, because another process (most plausibly a concurrent
+	// restore) can create that exact path in the window between that
+	// check and this call actually running. Copy is the last line of
+	// defense against that race, not a redundant check that could race
+	// with itself the way a bare "check then `cp` without any no-clobber
+	// flag" would.
 	Copy(ctx context.Context, src, dest string) error
 }
 
@@ -81,11 +92,59 @@ func (c *ExecCopier) run(parent context.Context, name string, args ...string) ([
 	return out, nil
 }
 
+// noClobberArgs are passed to every `cp` invocation Copy makes, as
+// defense-in-depth alongside Copy's own pre-flight os.Lstat check:
+//
+//   - "--update=none-fail" (GNU coreutils >= 9.2, confirmed present on this
+//     system's coreutils 9.7) makes cp itself refuse to replace an existing
+//     destination FILE and exit non-zero — unlike "-n"/"--no-clobber",
+//     which silently skips and exits 0, indistinguishable from success
+//     without a separate check. This is why "-n" alone was rejected: it
+//     would have reproduced the exact "reports success on a skipped copy"
+//     bug this fix closes, just with cp doing the skipping instead of the
+//     old code doing nothing.
+//   - "-T"/"--no-target-directory" makes cp always treat dest as the
+//     literal target path, never as "an existing directory to copy the
+//     source into" (GNU cp's default when dest already exists as a
+//     directory). Without it, restoring a directory onto an
+//     already-existing (e.g. concurrently created) destination directory
+//     would silently nest the copy one level deeper (dest/<basename(src)>)
+//     and exit 0 instead of failing.
+//
+// Neither flag fully closes the race by itself for a directory dest that
+// already exists but happens to contain no conflicting filenames (cp would
+// still merge into it and exit 0) — Copy's own pre-flight and post-failure
+// os.Lstat checks below are the actual authority for "does dest exist at
+// all", independent of `cp`'s version or its per-file update semantics.
+var noClobberArgs = []string{"-T", "--update=none-fail"}
+
 func (c *ExecCopier) Copy(ctx context.Context, src, dest string) error {
-	if _, err := c.run(ctx, "cp", "-a", "--reflink=always", src, dest); err != nil {
+	// Pre-flight: refuse outright if dest already exists in any form. This
+	// is the primary defense — an explicit, cp-version-independent check —
+	// closing the race between computeRestoreDestination's own Exists
+	// check and this call actually running.
+	if _, err := os.Lstat(dest); err == nil {
+		return fmt.Errorf("%w: %s", ErrRestoreDestinationExists, dest)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check restore destination %s: %w", dest, err)
+	}
+
+	reflinkArgs := append([]string{"-a", "--reflink=always"}, noClobberArgs...)
+	reflinkArgs = append(reflinkArgs, src, dest)
+	if _, err := c.run(ctx, "cp", reflinkArgs...); err != nil {
 		logger.Info("snapshot: reflink copy failed, falling back to a plain copy",
 			zap.String("src", src), zap.String("dest", dest), zap.Error(err))
-		if _, fallbackErr := c.run(ctx, "cp", "-a", src, dest); fallbackErr != nil {
+		plainArgs := append([]string{"-a"}, noClobberArgs...)
+		plainArgs = append(plainArgs, src, dest)
+		if _, fallbackErr := c.run(ctx, "cp", plainArgs...); fallbackErr != nil {
+			// If dest exists now despite not existing at the pre-flight
+			// check above, something else created it in the intervening
+			// window (the residual race the pre-flight check can't fully
+			// close by itself) — report the same retryable sentinel rather
+			// than an opaque failure.
+			if _, statErr := os.Lstat(dest); statErr == nil {
+				return fmt.Errorf("%w: %s (reflink attempt: %v; plain-copy attempt: %v)", ErrRestoreDestinationExists, dest, err, fallbackErr)
+			}
 			return fmt.Errorf("reflink copy failed (%v) and plain copy fallback also failed: %w", err, fallbackErr)
 		}
 	}

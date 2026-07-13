@@ -67,6 +67,78 @@ func TestExecCopierReturnsErrorWhenBothAttemptsFail(t *testing.T) {
 	}
 }
 
+// TestExecCopierRejectsPreExistingDestinationFile proves the never-overwrite
+// guarantee actually holds at the ExecCopier layer against a real `cp`
+// binary: a pre-existing destination file is left byte-for-byte untouched,
+// and Copy returns ErrRestoreDestinationExists (a retryable error) instead
+// of silently reporting success on a skipped copy.
+func TestExecCopierRejectsPreExistingDestinationFile(t *testing.T) {
+	if _, err := exec.LookPath("cp"); err != nil {
+		t.Skip("cp binary not available in this environment")
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.txt")
+	dest := filepath.Join(dir, "dest.txt")
+	if err := os.WriteFile(src, []byte("new content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte("pre-existing content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewExecCopier()
+	err := c.Copy(context.Background(), src, dest)
+	if !errors.Is(err, ErrRestoreDestinationExists) {
+		t.Fatalf("expected ErrRestoreDestinationExists, got %v", err)
+	}
+
+	got, readErr := os.ReadFile(dest)
+	if readErr != nil {
+		t.Fatalf("read dest: %v", readErr)
+	}
+	if string(got) != "pre-existing content" {
+		t.Errorf("pre-existing destination was overwritten: got %q", got)
+	}
+}
+
+// TestExecCopierRejectsPreExistingDestinationDirectory covers the case a
+// plain "-n"/"--update=none-fail" cp flag alone does NOT reliably catch:
+// when the destination already exists as a directory, GNU cp's default
+// behavior is to copy the source INTO it (nesting one level deeper) rather
+// than failing, which would silently produce a different layout than the
+// caller asked for instead of erroring. ExecCopier's own pre-flight
+// existence check (independent of any `cp` flag) must still catch this.
+func TestExecCopierRejectsPreExistingDestinationDirectory(t *testing.T) {
+	if _, err := exec.LookPath("cp"); err != nil {
+		t.Skip("cp binary not available in this environment")
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.txt")
+	dest := filepath.Join(dir, "destdir")
+	if err := os.WriteFile(src, []byte("new content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewExecCopier()
+	err := c.Copy(context.Background(), src, dest)
+	if !errors.Is(err, ErrRestoreDestinationExists) {
+		t.Fatalf("expected ErrRestoreDestinationExists, got %v", err)
+	}
+
+	entries, readErr := os.ReadDir(dest)
+	if readErr != nil {
+		t.Fatalf("read dest dir: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected pre-existing destination directory to stay empty (no nested copy), got %+v", entries)
+	}
+}
+
 func TestFakeCopierRecordsReflinkSuccess(t *testing.T) {
 	c := NewFakeCopier()
 	if err := c.Copy(context.Background(), "/src", "/dest"); err != nil {

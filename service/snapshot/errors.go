@@ -35,4 +35,12 @@ var (
 	// ErrRestoreSourceNotFound means the requested path does not exist
 	// inside the given (on-disk, validated) snapshot.
 	ErrRestoreSourceNotFound = errors.New("snapshot: restore source not found in snapshot")
+	// ErrRestoreDestinationExists means the destination Copy was about to
+	// write to already exists, despite computeRestoreDestination having
+	// found it free moments earlier: another process (most plausibly a
+	// concurrent restore) created something at that exact path in the
+	// window between that check and the actual copy. This is retryable —
+	// a fresh call to Restore will get a freshly (re-)computed, still
+	// collision-free destination from computeRestoreDestination.
+	ErrRestoreDestinationExists = errors.New("snapshot: restore destination already exists")
 )

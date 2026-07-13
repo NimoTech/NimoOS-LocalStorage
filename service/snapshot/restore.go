@@ -95,6 +95,9 @@ func (s *Service) Restore(ctx context.Context, volume VolumeInfo, snapshotName, 
 	}
 
 	relClean := filepath.Clean(relPath)
+	if relClean == "." {
+		return RestoreResult{}, fmt.Errorf("%w: refusing to restore the volume root (path \".\")", ErrInvalidRestorePath)
+	}
 
 	srcPath, err := resolveWithinDir(snapDir, relClean)
 	if err != nil {

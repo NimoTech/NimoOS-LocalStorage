@@ -177,7 +177,7 @@ func writeSnapshotError(ctx echo.Context, err error) error {
 		return writeSnapshotResult(ctx, http.StatusNotFound, common_err.INVALID_PARAMS, err.Error(), nil)
 	case errors.Is(err, snapshot.ErrVolumeNotBtrfs), errors.Is(err, snapshot.ErrVolumeNotMounted), errors.Is(err, snapshot.ErrInvalidSnapshotName), errors.Is(err, snapshot.ErrInvalidRestorePath):
 		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, err.Error(), nil)
-	case errors.Is(err, snapshot.ErrVolumeNotSupported):
+	case errors.Is(err, snapshot.ErrVolumeNotSupported), errors.Is(err, snapshot.ErrRestoreDestinationExists):
 		return writeSnapshotResult(ctx, http.StatusConflict, common_err.SERVICE_ERROR, err.Error(), nil)
 	default:
 		logger.Error("snapshot: request failed", zap.Error(err))
