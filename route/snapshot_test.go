@@ -1,0 +1,349 @@
+package route
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	commonmodel "github.com/NimoTech/NimoOS-Common/model"
+	"github.com/NimoTech/NimoOS-LocalStorage/service"
+	svcmodel "github.com/NimoTech/NimoOS-LocalStorage/service/model"
+	"github.com/NimoTech/NimoOS-LocalStorage/service/snapshot"
+	v2 "github.com/NimoTech/NimoOS-LocalStorage/service/v2"
+)
+
+// fakeRAIDService implements v2.RAIDService, exposing only ListRAIDArrays —
+// the only method route/snapshot.go calls. Every other method panics if
+// called, since no snapshot route test should ever reach them.
+type fakeRAIDService struct {
+	arrays []*svcmodel.RAIDArray
+	err    error
+}
+
+var _ v2.RAIDService = (*fakeRAIDService)(nil)
+
+func (f *fakeRAIDService) CreateRAIDArray(int, []string, string, int, string, func(int)) (*svcmodel.RAIDArray, error) {
+	panic("not implemented")
+}
+func (f *fakeRAIDService) DeleteRAIDArray(uint) error                 { panic("not implemented") }
+func (f *fakeRAIDService) GetRAIDStatus(uint) (*v2.RAIDStatus, error) { panic("not implemented") }
+func (f *fakeRAIDService) GetRAIDUsage(uint) (*v2.RAIDUsage, error)   { panic("not implemented") }
+func (f *fakeRAIDService) EnsureFilesystemResized(uint) error         { panic("not implemented") }
+func (f *fakeRAIDService) ListRAIDArrays() ([]*svcmodel.RAIDArray, error) {
+	return f.arrays, f.err
+}
+func (f *fakeRAIDService) ReplaceDisk(uint, string, string) error { panic("not implemented") }
+func (f *fakeRAIDService) RecoverOnBoot() error                   { panic("not implemented") }
+func (f *fakeRAIDService) Recover(uint) (string, error)           { panic("not implemented") }
+
+// fakeServices implements service.Services. It embeds the interface (nil)
+// so every method not explicitly overridden panics on a nil dereference if
+// a test accidentally exercises a code path that needs it — a loud failure
+// rather than a silently wrong result.
+type fakeServices struct {
+	service.Services
+	raid v2.RAIDService
+	snap *snapshot.Service
+}
+
+func (f *fakeServices) RAID() v2.RAIDService        { return f.raid }
+func (f *fakeServices) Snapshot() *snapshot.Service { return f.snap }
+
+// installFakeServices points service.MyService at a fake for the duration
+// of the test, restoring the previous value on cleanup.
+func installFakeServices(t *testing.T, raids []*svcmodel.RAIDArray) (*snapshot.FakeRunner, *snapshot.FakeStore) {
+	t.Helper()
+	runner := snapshot.NewFakeRunner()
+	store := snapshot.NewFakeStore()
+	svc := &snapshot.Service{Runner: runner, Store: store, Persister: snapshot.NewFakeFstabPersister()}
+
+	prev := service.MyService
+	fake := &fakeServices{raid: &fakeRAIDService{arrays: raids}, snap: svc}
+	service.MyService = fake
+	t.Cleanup(func() { service.MyService = prev })
+
+	return runner, store
+}
+
+// btrfsVolume returns a RAIDArray backed by a real temp directory (so
+// EnsureSnapshotsMount's os.MkdirAll(".snapshots") — a real filesystem call
+// not abstracted by the fake Runner — succeeds without touching the actual
+// host filesystem or needing root), per test.
+func btrfsVolume(t *testing.T) *svcmodel.RAIDArray {
+	t.Helper()
+	return &svcmodel.RAIDArray{
+		UUID:       "vol-uuid-1",
+		DevicePath: "/dev/md0",
+		MountPoint: t.TempDir(),
+		Filesystem: "btrfs",
+	}
+}
+
+func decodeResult(t *testing.T, rec *httptest.ResponseRecorder) commonmodel.Result {
+	t.Helper()
+	var result commonmodel.Result
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response body %q: %v", rec.Body.String(), err)
+	}
+	return result
+}
+
+func doRequest(e http.Handler, method, target string, body []byte, loopback bool) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if loopback {
+		req.RemoteAddr = "127.0.0.1:12345"
+	} else {
+		req.RemoteAddr = "203.0.113.5:12345"
+	}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestSnapshotRoutesRequireAuthForNonLoopback(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot/volumes", nil, false)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got status %d, want %d; body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestListSnapshotVolumes(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot/volumes", nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	result := decodeResult(t, rec)
+	data, ok := result.Data.([]interface{})
+	if !ok || len(data) != 1 {
+		t.Fatalf("expected 1 volume status, got %#v", result.Data)
+	}
+	row := data[0].(map[string]interface{})
+	if row["volume_uuid"] != "vol-uuid-1" {
+		t.Errorf("got volume_uuid %v, want vol-uuid-1", row["volume_uuid"])
+	}
+	if row["supported"] != true {
+		t.Errorf("got supported %v, want true", row["supported"])
+	}
+}
+
+func TestListSnapshotsRequiresVolumeUUID(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot", nil, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListSnapshotsUnknownVolumeIs404(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot?volume_uuid=nope", nil, true)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListSnapshotsReturnsReconciledList(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	runner.ListResult[vol.MountPoint] = []snapshot.SubvolumeEntry{
+		{ID: "300", Path: "@snapshots/20260712T030000Z_manual_x"},
+	}
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot?volume_uuid=vol-uuid-1", nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	result := decodeResult(t, rec)
+	data, ok := result.Data.([]interface{})
+	if !ok || len(data) != 1 {
+		t.Fatalf("expected 1 snapshot, got %#v", result.Data)
+	}
+}
+
+func TestCreateSnapshotRequiresVolumeUUID(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot", []byte(`{}`), true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateSnapshotRejectsUnsupportedVolume(t *testing.T) {
+	vol := btrfsVolume(t)
+	vol.Filesystem = "ext4"
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400 (not btrfs); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateSnapshotSucceeds(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, store := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	runner.SeedTopLevelSubvolume(vol.DevicePath, "@snapshots")
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","label":"before-move"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot", body, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("got status %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	recs, _ := store.ListSnapshots("vol-uuid-1")
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 stored snapshot, got %d", len(recs))
+	}
+	if recs[0].Type != snapshot.TypeManual {
+		t.Errorf("got type %q, want manual", recs[0].Type)
+	}
+}
+
+func TestDeleteSnapshotRejectsPathTraversal(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	// A %2F-encoded name is decoded to a literal "/" by net/url before it
+	// reaches echo's router, so this may never even reach our handler (the
+	// router itself can 404 on the now-multi-segment path) — either way,
+	// the only thing that matters for this security property is that
+	// nothing gets deleted and the request never succeeds.
+	target := "/v2/snapshot/" + "20260712T030000Z_manual_..%2F..%2F..%2Fetc%2Fpasswd" + "?volume_uuid=vol-uuid-1"
+	rec := doRequest(router, http.MethodDelete, target, nil, true)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected the traversal attempt to be rejected, got 200; body=%s", rec.Body.String())
+	}
+	if len(runner.DeletedPaths) != 0 {
+		t.Fatalf("expected no disk delete for a traversal attempt, got %v", runner.DeletedPaths)
+	}
+}
+
+func TestDeleteSnapshotRejectsUnrecognizedName(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodDelete, "/v2/snapshot/not-one-of-ours?volume_uuid=vol-uuid-1", nil, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteSnapshotNotFoundOnDisk(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodDelete, "/v2/snapshot/20260712T030000Z_manual_x?volume_uuid=vol-uuid-1", nil, true)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteSnapshotSucceeds(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, store := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := "20260712T030000Z_manual_x"
+	runner.ListResult[vol.MountPoint] = []snapshot.SubvolumeEntry{{ID: "300", Path: "@snapshots/" + name}}
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodDelete, "/v2/snapshot/"+name+"?volume_uuid=vol-uuid-1", nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(runner.DeletedPaths) != 1 {
+		t.Fatalf("expected 1 disk delete, got %v", runner.DeletedPaths)
+	}
+	remaining, _ := store.ListSnapshots("vol-uuid-1")
+	if len(remaining) != 0 {
+		t.Fatalf("expected db record removed, got %+v", remaining)
+	}
+}
+
+func TestGetSnapshotPolicyReturnsDefault(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot/policy?volume_uuid=vol-uuid-1", nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	result := decodeResult(t, rec)
+	row := result.Data.(map[string]interface{})
+	if row["enabled"] != false {
+		t.Errorf("got enabled %v, want false", row["enabled"])
+	}
+}
+
+func TestPutSnapshotPolicyRejectsEnablingUnsupportedVolume(t *testing.T) {
+	vol := btrfsVolume(t)
+	vol.Filesystem = "ext4"
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","enabled":true,"hourly_keep":24,"daily_keep":7,"weekly_keep":4,"pause_threshold_pct":90}`)
+	rec := doRequest(router, http.MethodPut, "/v2/snapshot/policy", body, true)
+	if rec.Code != http.StatusConflict && rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 409 or 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutSnapshotPolicyDisableSucceeds(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","enabled":false}`)
+	rec := doRequest(router, http.MethodPut, "/v2/snapshot/policy", body, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutSnapshotPolicyEnableSucceedsForSupportedVolume(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	runner.SeedTopLevelSubvolume(vol.DevicePath, "@snapshots")
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","enabled":true,"hourly_keep":24,"daily_keep":7,"weekly_keep":4,"pause_threshold_pct":90}`)
+	rec := doRequest(router, http.MethodPut, "/v2/snapshot/policy", body, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"github.com/NimoTech/NimoOS-Common/external"
 	"github.com/NimoTech/NimoOS-LocalStorage/codegen/message_bus"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/config"
+	"github.com/NimoTech/NimoOS-LocalStorage/service/snapshot"
 	v2 "github.com/NimoTech/NimoOS-LocalStorage/service/v2"
 	"github.com/NimoTech/NimoOS-LocalStorage/service/v2/wrapper"
 	"github.com/patrickmn/go-cache"
@@ -25,6 +26,7 @@ type Services interface {
 	MessageBus() *message_bus.ClientWithResponses
 	Storage() StorageService
 	RAID() v2.RAIDService
+	Snapshot() *snapshot.Service
 }
 
 func NewService(db *gorm.DB) Services {
@@ -36,6 +38,7 @@ func NewService(db *gorm.DB) Services {
 	notifySystem := external.NewNotifyService(config.CommonInfo.RuntimePath)
 	sharesService := external.NewShareService(config.CommonInfo.RuntimePath)
 	raidService := v2.NewRAIDService(db)
+	snapshotService := snapshot.NewService(db)
 
 	return &store{
 		usb:          NewUSBService(),
@@ -47,6 +50,7 @@ func NewService(db *gorm.DB) Services {
 		shares:       sharesService,
 		storage:      NewStorageService(),
 		raid:         raidService,
+		snapshot:     snapshotService,
 	}
 }
 
@@ -60,6 +64,7 @@ type store struct {
 	shares       external.ShareService
 	storage      StorageService
 	raid         v2.RAIDService
+	snapshot     *snapshot.Service
 }
 
 func (c *store) NotifySystem() external.NotifyService {
@@ -96,6 +101,10 @@ func (c *store) Shares() external.ShareService {
 
 func (c *store) RAID() v2.RAIDService {
 	return c.raid
+}
+
+func (c *store) Snapshot() *snapshot.Service {
+	return c.snapshot
 }
 
 func (c *store) MessageBus() *message_bus.ClientWithResponses {

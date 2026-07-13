@@ -7,6 +7,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// FullStore is the persistence surface the API layer (route/snapshot.go,
+// service/snapshot's Service) needs: snapshot records (Store) plus
+// per-volume policy CRUD. GormStore is the production implementation;
+// FakeStore (store_fake.go) is the in-memory test double.
+type FullStore interface {
+	Store
+	GetOrCreatePolicy(volumeUUID string) (*model.SnapshotPolicy, error)
+	SavePolicy(policy model.SnapshotPolicy) error
+}
+
 // GormStore is the production Store (see reconcile.go), plus the small
 // amount of additional policy persistence a later task's API routes will
 // need (get-or-create the per-volume policy, and upsert it).
@@ -15,6 +25,7 @@ type GormStore struct {
 }
 
 var _ Store = (*GormStore)(nil)
+var _ FullStore = (*GormStore)(nil)
 
 // NewGormStore wraps db (as returned by pkg/sqlite.GetGlobalDB/GetDBByFile,
 // which already has o_snapshot/o_snapshot_policy AutoMigrated).

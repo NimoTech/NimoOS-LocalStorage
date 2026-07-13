@@ -165,6 +165,7 @@ func main() {
 		route.V2APIPath,
 		route.V2DocPath,
 		route.V2RAIDPath,
+		route.V2SnapshotPath,
 	}
 	for _, apiPath := range apiPaths {
 		err = service.MyService.Gateway().CreateRoute(&model.Route{
@@ -182,11 +183,14 @@ func main() {
 	v2Router := route.InitV2Router()
 	v2DocRouter := route.InitV2DocRouter(_docHTML, _docYAML)
 	raidRouter := route.InitRAIDRouter()
+	snapshotRouter := route.InitSnapshotRouter()
 
-	// Combine v2 routers: RAID routes + local_storage OpenAPI routes
+	// Combine v2 routers: RAID routes + snapshot routes + local_storage OpenAPI routes
 	v2Mux := http.NewServeMux()
 	v2Mux.Handle("/v2/raid/", raidRouter)
 	v2Mux.Handle("/v2/raid", raidRouter)
+	v2Mux.Handle("/v2/snapshot/", snapshotRouter)
+	v2Mux.Handle("/v2/snapshot", snapshotRouter)
 	v2Mux.Handle("/", v2Router)
 
 	mux := &util_http.HandlerMultiplexer{
