@@ -68,6 +68,44 @@ func TestResolveVolumeSucceedsWhenMountedBtrfs(t *testing.T) {
 	}
 }
 
+// ResolveVolumeIdentity is the lighter counterpart used by operations that
+// must work even when a known volume is temporarily offline (RAID member
+// unplugged, cold-boot enumeration race) — see B2 Fix Round 1: a pure DB
+// read (GET policy) or disabling an already-saved policy (PUT
+// enabled:false, matching SavePolicy's own branching) has no business
+// requiring the volume to be mounted right now.
+
+func TestResolveVolumeIdentityNotFound(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	_, err := svc.ResolveVolumeIdentity(nil, "missing")
+	if !errors.Is(err, ErrVolumeNotFound) {
+		t.Fatalf("expected ErrVolumeNotFound, got %v", err)
+	}
+}
+
+func TestResolveVolumeIdentityRejectsNonBtrfs(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	vol := serviceTestVolume(t)
+	vol.Filesystem = "ext4"
+	_, err := svc.ResolveVolumeIdentity([]VolumeInfo{vol}, vol.UUID)
+	if !errors.Is(err, ErrVolumeNotBtrfs) {
+		t.Fatalf("expected ErrVolumeNotBtrfs, got %v", err)
+	}
+}
+
+func TestResolveVolumeIdentitySucceedsWhenUnmounted(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	vol := serviceTestVolume(t)
+	// Deliberately not seeded as mounted in the fake runner.
+	got, err := svc.ResolveVolumeIdentity([]VolumeInfo{vol}, vol.UUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.UUID != vol.UUID {
+		t.Errorf("got volume %+v, want %+v", got, vol)
+	}
+}
+
 func TestCreateManualRejectsUnsupportedVolume(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	vol := serviceTestVolume(t)

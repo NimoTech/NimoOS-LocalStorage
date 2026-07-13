@@ -54,11 +54,24 @@ type VolumeStatus struct {
 	PausedReason string `json:"paused_reason"`
 }
 
-// ResolveVolume finds volumeUUID among volumes (the caller's current
-// enumeration of known volumes, e.g. VolumesFromRAIDArrays(raidList)) and
-// verifies it's usable as a snapshot volume right now: btrfs, and actually
-// mounted (handoff/B2 brief: "volume_uuid 必须对应真实已挂载 btrfs 卷").
-func (s *Service) ResolveVolume(volumes []VolumeInfo, volumeUUID string) (VolumeInfo, error) {
+// ResolveVolumeIdentity finds volumeUUID among volumes (the caller's
+// current enumeration of known volumes, e.g.
+// VolumesFromRAIDArrays(raidList)) and verifies only its identity: that
+// it's a known volume and that its filesystem is btrfs. It deliberately
+// does NOT require the volume to be currently mounted.
+//
+// Fix Round 1 (review defect): the original ResolveVolume unconditionally
+// required a mounted volume, and that gate was applied uniformly to every
+// volume_uuid-bearing endpoint including GET policy (a pure DB read) and
+// PUT policy's disable path — even though Service.SavePolicy itself only
+// calls EnsureSnapshotsMount when Enabled==true (see
+// TestSavePolicyPersistsDisablingWithoutMountCheck). That made it
+// impossible to read or disable a saved policy for a volume that's
+// temporarily offline (RAID member unplugged, cold-boot enumeration race),
+// even though nothing about those operations touches the filesystem. Use
+// this lighter variant for operations that don't need the volume mounted;
+// use ResolveVolume (below) for operations that do.
+func (s *Service) ResolveVolumeIdentity(volumes []VolumeInfo, volumeUUID string) (VolumeInfo, error) {
 	for _, v := range volumes {
 		if v.UUID != volumeUUID {
 			continue
@@ -66,16 +79,30 @@ func (s *Service) ResolveVolume(volumes []VolumeInfo, volumeUUID string) (Volume
 		if !strings.EqualFold(v.Filesystem, "btrfs") {
 			return VolumeInfo{}, ErrVolumeNotBtrfs
 		}
-		mounted, err := s.Runner.IsMounted(v.DevicePath, v.MountPoint)
-		if err != nil {
-			return VolumeInfo{}, fmt.Errorf("check volume mount state: %w", err)
-		}
-		if !mounted {
-			return VolumeInfo{}, ErrVolumeNotMounted
-		}
 		return v, nil
 	}
 	return VolumeInfo{}, ErrVolumeNotFound
+}
+
+// ResolveVolume finds volumeUUID among volumes and verifies it's usable as
+// a snapshot volume right now: btrfs, and actually mounted (handoff/B2
+// brief: "volume_uuid 必须对应真实已挂载 btrfs 卷" — for operations that
+// actually touch the filesystem: list/create/delete snapshots, and
+// enabling a policy). See ResolveVolumeIdentity for the mount-agnostic
+// variant used by reads and disabling a policy.
+func (s *Service) ResolveVolume(volumes []VolumeInfo, volumeUUID string) (VolumeInfo, error) {
+	v, err := s.ResolveVolumeIdentity(volumes, volumeUUID)
+	if err != nil {
+		return VolumeInfo{}, err
+	}
+	mounted, err := s.Runner.IsMounted(v.DevicePath, v.MountPoint)
+	if err != nil {
+		return VolumeInfo{}, fmt.Errorf("check volume mount state: %w", err)
+	}
+	if !mounted {
+		return VolumeInfo{}, ErrVolumeNotMounted
+	}
+	return v, nil
 }
 
 // ListVolumeStatuses builds the GET /v2/snapshot/volumes response for every

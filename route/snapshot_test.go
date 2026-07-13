@@ -334,6 +334,50 @@ func TestPutSnapshotPolicyDisableSucceeds(t *testing.T) {
 	}
 }
 
+// The next three tests cover B2 Fix Round 1: a known btrfs volume that is
+// currently unmounted (RAID member offline, cold-boot enumeration race)
+// must still allow reading its saved policy, and disabling it — only
+// *enabling* automatic snapshots legitimately needs the volume mounted
+// (SavePolicy itself only calls EnsureSnapshotsMount when Enabled==true).
+
+func TestGetSnapshotPolicyWorksWhenVolumeUnmounted(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	// Deliberately not seeded as mounted.
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot/policy?volume_uuid=vol-uuid-1", nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200 (policy read must not require mount); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutSnapshotPolicyDisableSucceedsWhenUnmounted(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	// Deliberately not seeded as mounted.
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","enabled":false}`)
+	rec := doRequest(router, http.MethodPut, "/v2/snapshot/policy", body, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200 (disabling must not require mount); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutSnapshotPolicyEnableStillRequiresMountWhenUnmounted(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	// Deliberately not seeded as mounted.
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","enabled":true,"hourly_keep":24,"daily_keep":7,"weekly_keep":4,"pause_threshold_pct":90}`)
+	rec := doRequest(router, http.MethodPut, "/v2/snapshot/policy", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400 (enabling still requires mount); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestPutSnapshotPolicyEnableSucceedsForSupportedVolume(t *testing.T) {
 	vol := btrfsVolume(t)
 	runner, _ := installFakeServices(t, []*svcmodel.RAIDArray{vol})

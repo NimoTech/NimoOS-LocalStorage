@@ -126,6 +126,33 @@ func resolveVolumeParam(ctx echo.Context, volumeUUID string) (snapshot.VolumeInf
 	return vol, true
 }
 
+// resolveVolumeIdentityParam is resolveVolumeParam's mount-agnostic sibling:
+// it only checks that volumeUUID is a known btrfs volume, not that it's
+// currently mounted. Use it for operations that don't touch the
+// filesystem — a pure DB read (GET policy), or disabling an already-saved
+// policy (PUT policy, enabled:false) — so a volume that is temporarily
+// offline (RAID member unplugged, cold-boot enumeration race) can still be
+// read/disabled (Fix Round 1; see Service.ResolveVolumeIdentity's doc
+// comment).
+func resolveVolumeIdentityParam(ctx echo.Context, volumeUUID string) (snapshot.VolumeInfo, bool) {
+	if volumeUUID == "" {
+		writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, "volume_uuid is required", nil)
+		return snapshot.VolumeInfo{}, false
+	}
+	volumes, err := currentVolumes()
+	if err != nil {
+		logger.Error("snapshot: failed to list volumes", zap.Error(err))
+		writeSnapshotResult(ctx, http.StatusInternalServerError, common_err.SERVICE_ERROR, err.Error(), nil)
+		return snapshot.VolumeInfo{}, false
+	}
+	vol, err := service.MyService.Snapshot().ResolveVolumeIdentity(volumes, volumeUUID)
+	if err != nil {
+		writeSnapshotError(ctx, err)
+		return snapshot.VolumeInfo{}, false
+	}
+	return vol, true
+}
+
 func writeSnapshotResult(ctx echo.Context, status, code int, message string, data interface{}) error {
 	return ctx.JSON(status, model.Result{Success: code, Message: message, Data: data})
 }
@@ -207,9 +234,13 @@ func deleteSnapshot(ctx echo.Context) error {
 	return writeSnapshotResult(ctx, http.StatusOK, common_err.SUCCESS, common_err.GetMsg(common_err.SUCCESS), nil)
 }
 
-// getSnapshotPolicy handles GET /v2/snapshot/policy?volume_uuid=.
+// getSnapshotPolicy handles GET /v2/snapshot/policy?volume_uuid=. This is a
+// pure DB read, so it deliberately does not require the volume to be
+// currently mounted — only that volume_uuid identifies a known btrfs
+// volume (Fix Round 1: an admin must be able to see a saved policy for a
+// volume that's temporarily offline).
 func getSnapshotPolicy(ctx echo.Context) error {
-	vol, ok := resolveVolumeParam(ctx, ctx.QueryParam("volume_uuid"))
+	vol, ok := resolveVolumeIdentityParam(ctx, ctx.QueryParam("volume_uuid"))
 	if !ok {
 		return nil
 	}
@@ -226,12 +257,24 @@ func getSnapshotPolicy(ctx echo.Context) error {
 // service/snapshot/store.go): callers must send every field, not just the
 // one(s) they're changing, or unspecified numeric fields will be persisted
 // as zero.
+//
+// Volume resolution mirrors Service.SavePolicy's own branching (Fix Round
+// 1): enabling automatic snapshots needs the volume mounted (it calls
+// EnsureSnapshotsMount), but disabling an already-saved policy is a plain
+// DB write and must work even when the volume is temporarily offline.
 func putSnapshotPolicy(ctx echo.Context) error {
 	var req snapshotPolicyRequest
 	if err := ctx.Bind(&req); err != nil {
 		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, err.Error(), nil)
 	}
-	vol, ok := resolveVolumeParam(ctx, req.VolumeUUID)
+
+	var vol snapshot.VolumeInfo
+	var ok bool
+	if req.Enabled {
+		vol, ok = resolveVolumeParam(ctx, req.VolumeUUID)
+	} else {
+		vol, ok = resolveVolumeIdentityParam(ctx, req.VolumeUUID)
+	}
 	if !ok {
 		return nil
 	}
