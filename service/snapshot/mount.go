@@ -100,7 +100,13 @@ func EnsureSnapshotsMount(ctx context.Context, runner Runner, persister FstabPer
 	}
 
 	if persister != nil {
-		opts := "subvol=/" + SnapshotsSubvolumeName
+		// nofail (+ a bounded device-timeout) is required here: the parent
+		// RAID volume is never itself in fstab (it's mounted from the DB by
+		// RecoverOnBoot at service startup, which runs after
+		// local-fs.target), so at boot this mountpoint doesn't exist yet
+		// when systemd processes fstab. Without nofail that failure fails
+		// local-fs.target and drops the box into emergency mode.
+		opts := "subvol=/" + SnapshotsSubvolumeName + ",nofail,x-systemd.device-timeout=10s"
 		if err := persister.Persist(snapshotsDir, volume.DevicePath, "btrfs", opts); err != nil {
 			// Non-fatal: the mount itself succeeded, only reboot
 			// persistence failed. Log and continue, matching how

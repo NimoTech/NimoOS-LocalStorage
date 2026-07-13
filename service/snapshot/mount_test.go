@@ -92,6 +92,13 @@ func TestEnsureSnapshotsMountExistingSubvolumeJustMounts(t *testing.T) {
 	if entry.FSType != "btrfs" || !strings.Contains(entry.Options, SnapshotsSubvolumeName) {
 		t.Errorf("persisted entry = %+v, want fstype btrfs and options mentioning %s", entry, SnapshotsSubvolumeName)
 	}
+	// The parent volume isn't in fstab (it's mounted from the DB at service
+	// startup, after local-fs.target), so this entry MUST be nofail: without
+	// it, a boot where the .snapshots mountpoint doesn't exist yet fails
+	// local-fs.target and drops the box into emergency mode.
+	if !strings.Contains(entry.Options, "nofail") {
+		t.Errorf("persisted entry options = %q, want it to contain \"nofail\" so a missing parent mount at boot doesn't fail local-fs.target", entry.Options)
+	}
 	mounted, _ := runner.IsMounted(vol.DevicePath, SnapshotsDir(vol))
 	if !mounted {
 		t.Error("expected runner to report the volume as mounted after EnsureSnapshotsMount")
