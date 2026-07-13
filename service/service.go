@@ -1,8 +1,11 @@
 package service
 
 import (
+	"context"
+
 	"github.com/NimoTech/NimoOS-Common/external"
 	"github.com/NimoTech/NimoOS-LocalStorage/codegen/message_bus"
+	"github.com/NimoTech/NimoOS-LocalStorage/common"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/config"
 	"github.com/NimoTech/NimoOS-LocalStorage/service/snapshot"
 	v2 "github.com/NimoTech/NimoOS-LocalStorage/service/v2"
@@ -27,6 +30,10 @@ type Services interface {
 	Storage() StorageService
 	RAID() v2.RAIDService
 	Snapshot() *snapshot.Service
+	// SnapshotScheduler returns the autonomous scheduler layer (handoff
+	// §3.3/task-B3): a goroutine, started by main.go, that ticks every
+	// minute to create/retire automatic snapshots per volume policy.
+	SnapshotScheduler() *snapshot.Scheduler
 }
 
 func NewService(db *gorm.DB) Services {
@@ -40,7 +47,7 @@ func NewService(db *gorm.DB) Services {
 	raidService := v2.NewRAIDService(db)
 	snapshotService := snapshot.NewService(db)
 
-	return &store{
+	s := &store{
 		usb:          NewUSBService(),
 		disk:         NewDiskService(db),
 		localStorage: v2.NewLocalStorageService(db, wrapper.NewMountInfo()),
@@ -52,19 +59,45 @@ func NewService(db *gorm.DB) Services {
 		raid:         raidService,
 		snapshot:     snapshotService,
 	}
+
+	// listSnapshotVolumes mirrors route/snapshot.go's currentVolumes(): a
+	// RAID array is today's only "volume" this service knows about (see
+	// snapshot.VolumesFromRAIDArrays' doc comment). The scheduler must
+	// re-enumerate this fresh every tick (handoff §3.3: volumes are
+	// hot-pluggable, so this is never cached).
+	listSnapshotVolumes := func(_ context.Context) ([]snapshot.VolumeInfo, error) {
+		raids, err := raidService.ListRAIDArrays()
+		if err != nil {
+			return nil, err
+		}
+		return snapshot.VolumesFromRAIDArrays(raids), nil
+	}
+
+	s.snapshotScheduler = snapshot.NewScheduler(snapshot.SchedulerConfig{
+		Runner:      snapshotService.Runner,
+		Store:       snapshotService.Store,
+		Persister:   snapshotService.Persister,
+		Pause:       snapshotService.Pause,
+		ListVolumes: listSnapshotVolumes,
+		Usage:       snapshot.NewRAIDUsageProvider(raidService),
+		Publisher:   snapshot.NewMessageBusPublisher(s.MessageBus, common.ServiceName),
+	})
+
+	return s
 }
 
 type store struct {
-	usb          USBService
-	disk         DiskService
-	localStorage *v2.LocalStorageService
-	gateway      external.ManagementService
-	notify       NotifyServer
-	notifySystem external.NotifyService
-	shares       external.ShareService
-	storage      StorageService
-	raid         v2.RAIDService
-	snapshot     *snapshot.Service
+	usb               USBService
+	disk              DiskService
+	localStorage      *v2.LocalStorageService
+	gateway           external.ManagementService
+	notify            NotifyServer
+	notifySystem      external.NotifyService
+	shares            external.ShareService
+	storage           StorageService
+	raid              v2.RAIDService
+	snapshot          *snapshot.Service
+	snapshotScheduler *snapshot.Scheduler
 }
 
 func (c *store) NotifySystem() external.NotifyService {
@@ -105,6 +138,10 @@ func (c *store) RAID() v2.RAIDService {
 
 func (c *store) Snapshot() *snapshot.Service {
 	return c.snapshot
+}
+
+func (c *store) SnapshotScheduler() *snapshot.Scheduler {
+	return c.snapshotScheduler
 }
 
 func (c *store) MessageBus() *message_bus.ClientWithResponses {

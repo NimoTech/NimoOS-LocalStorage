@@ -26,6 +26,7 @@ import (
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/sqlite"
 	"github.com/NimoTech/NimoOS-LocalStorage/route"
 	"github.com/NimoTech/NimoOS-LocalStorage/service"
+	"github.com/NimoTech/NimoOS-LocalStorage/service/snapshot"
 	"github.com/coreos/go-systemd/daemon"
 	"github.com/robfig/cron/v3"
 	"github.com/samber/lo"
@@ -141,6 +142,10 @@ func main() {
 
 	go sendStorageStats()
 
+	// btrfs snapshot scheduler (handoff §3.3/task-B3): follows the
+	// service's own lifecycle via ctx, same as monitorUEvent above.
+	go service.MyService.SnapshotScheduler().Run(ctx)
+
 	crontab := cron.New(cron.WithSeconds())
 	if _, err := crontab.AddFunc("@every 5s", sendStorageStats); err != nil {
 		logger.Error("crontab add func error", zap.Error(err))
@@ -226,6 +231,30 @@ func RegMsg() {
 	defer cancel()
 	var events []message_bus.EventType
 	events = append(events, message_bus.EventType{Name: common.ServiceName + ":storage_status", SourceID: common.ServiceName, PropertyTypeList: []message_bus.PropertyType{}})
+	// btrfs snapshot scheduler events (handoff §3.5/task-B3).
+	events = append(events,
+		message_bus.EventType{
+			Name:     snapshot.EventSnapshotCreated,
+			SourceID: common.ServiceName,
+			PropertyTypeList: []message_bus.PropertyType{
+				{Name: "volume"}, {Name: "name"}, {Name: "type"},
+			},
+		},
+		message_bus.EventType{
+			Name:     snapshot.EventSnapshotFailed,
+			SourceID: common.ServiceName,
+			PropertyTypeList: []message_bus.PropertyType{
+				{Name: "volume"}, {Name: "error"},
+			},
+		},
+		message_bus.EventType{
+			Name:     snapshot.EventSnapshotPaused,
+			SourceID: common.ServiceName,
+			PropertyTypeList: []message_bus.PropertyType{
+				{Name: "volume"}, {Name: "reason"},
+			},
+		},
+	)
 	// register at message bus
 	for i := 0; i < 10; i++ {
 		response, err := service.MyService.MessageBus().RegisterEventTypesWithResponse(context.Background(), events)

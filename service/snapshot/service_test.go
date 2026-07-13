@@ -284,6 +284,48 @@ func TestListVolumeStatusesReflectsEnabledFromPolicy(t *testing.T) {
 	}
 }
 
+func TestListVolumeStatusesReflectsLivePauseState(t *testing.T) {
+	svc, runner, _ := newTestService(t)
+	svc.Pause = NewPauseState()
+	vol := serviceTestVolume(t)
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+
+	svc.Pause.Set(vol.UUID, "volume usage 95.0% exceeds pause threshold 90%")
+
+	got, err := svc.ListVolumeStatuses(context.Background(), []VolumeInfo{vol})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got[0].PausedReason != "volume usage 95.0% exceeds pause threshold 90%" {
+		t.Fatalf("expected PausedReason to reflect live PauseState, got %q", got[0].PausedReason)
+	}
+
+	svc.Pause.Clear(vol.UUID)
+	got, err = svc.ListVolumeStatuses(context.Background(), []VolumeInfo{vol})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got[0].PausedReason != "" {
+		t.Fatalf("expected PausedReason to clear once resolved, got %q", got[0].PausedReason)
+	}
+}
+
+func TestListVolumeStatusesPausedReasonEmptyWithoutPauseState(t *testing.T) {
+	// svc.Pause is left nil (as newTestService leaves it) — must not panic
+	// and must report empty, not the stale "B3 接管" placeholder text.
+	svc, runner, _ := newTestService(t)
+	vol := serviceTestVolume(t)
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+
+	got, err := svc.ListVolumeStatuses(context.Background(), []VolumeInfo{vol})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got[0].PausedReason != "" {
+		t.Fatalf("expected empty PausedReason with nil Pause, got %q", got[0].PausedReason)
+	}
+}
+
 func TestSavePolicyRejectsEnablingUnsupportedVolume(t *testing.T) {
 	svc, _, store := newTestService(t)
 	vol := serviceTestVolume(t)

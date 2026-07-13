@@ -22,6 +22,13 @@ type Service struct {
 	Runner    Runner
 	Store     FullStore
 	Persister FstabPersister
+	// Pause is the scheduler's live space-guard state (scheduler.go /
+	// pause.go), shared with whatever *Scheduler is constructed on top of
+	// this same Service so ListVolumeStatuses's PausedReason (below)
+	// reflects the scheduler's most recent evaluation. nil-safe: a Service
+	// built without wiring a Scheduler (e.g. most of this package's own
+	// tests) simply reports every volume as never paused.
+	Pause *PauseState
 }
 
 // NewService returns the production Service, backed by the real btrfs/mount
@@ -31,6 +38,7 @@ func NewService(db *gorm.DB) *Service {
 		Runner:    NewExecRunner(),
 		Store:     NewGormStore(db),
 		Persister: RealFstabPersister{},
+		Pause:     NewPauseState(),
 	}
 }
 
@@ -49,8 +57,11 @@ type VolumeStatus struct {
 	Enabled   bool       `json:"enabled"`
 	Count     int        `json:"count"`
 	LastAt    *time.Time `json:"last_at"`
-	// PausedReason is left empty for M1 (B2); the space-guard in B3 will
-	// populate it when automatic snapshots are paused.
+	// PausedReason reflects the scheduler's live space-guard state
+	// (Service.Pause) for this volume: non-empty while automatic snapshots
+	// are currently paused due to low free space, empty otherwise —
+	// including automatically once usage recovers (handoff §3.3: "恢复后
+	// 自动续").
 	PausedReason string `json:"paused_reason"`
 }
 
@@ -139,6 +150,8 @@ func (s *Service) ListVolumeStatuses(ctx context.Context, volumes []VolumeInfo) 
 				st.LastAt = latestCreatedAt(recs)
 			}
 		}
+
+		st.PausedReason = s.Pause.Reason(v.UUID)
 
 		statuses = append(statuses, st)
 	}
