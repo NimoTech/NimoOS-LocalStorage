@@ -29,6 +29,26 @@ type Service struct {
 	// built without wiring a Scheduler (e.g. most of this package's own
 	// tests) simply reports every volume as never paused.
 	Pause *PauseState
+	// Paths is the plain-filesystem seam (existence/stat/mkdir) Restore and
+	// FileVersions need beyond btrfs commands — see fs.go.
+	Paths PathChecker
+	// Copier performs Restore's actual data copy (reflink, falling back to
+	// a plain deep copy) — see copy.go.
+	Copier Copier
+	// Clock supplies Restore's ".restored-<ts>" timestamp. nil-safe: a
+	// Service constructed with a zero-value Clock (e.g. most of this
+	// package's own pre-B4 tests, which never call Restore) simply isn't
+	// exercised on that path; NewService always wires RealClock{}, and
+	// tests that do call Restore inject a FakeClock for deterministic
+	// destination names.
+	Clock Clock
+}
+
+func (s *Service) clock() Clock {
+	if s.Clock == nil {
+		return RealClock{}
+	}
+	return s.Clock
 }
 
 // NewService returns the production Service, backed by the real btrfs/mount
@@ -39,6 +59,9 @@ func NewService(db *gorm.DB) *Service {
 		Store:     NewGormStore(db),
 		Persister: RealFstabPersister{},
 		Pause:     NewPauseState(),
+		Paths:     OSPathChecker{},
+		Copier:    NewExecCopier(),
+		Clock:     RealClock{},
 	}
 }
 

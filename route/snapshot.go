@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	"github.com/NimoTech/NimoOS-Common/external"
@@ -73,6 +74,8 @@ func InitSnapshotRouter() http.Handler {
 	snapshotGroup.DELETE("/:name", deleteSnapshot)
 	snapshotGroup.GET("/policy", getSnapshotPolicy)
 	snapshotGroup.PUT("/policy", putSnapshotPolicy)
+	snapshotGroup.POST("/restore", restoreSnapshotFile)
+	snapshotGroup.GET("/file-versions", listFileVersions)
 
 	return e
 }
@@ -80,6 +83,14 @@ func InitSnapshotRouter() http.Handler {
 type createSnapshotRequest struct {
 	VolumeUUID string `json:"volume_uuid"`
 	Label      string `json:"label"`
+}
+
+// restoreRequest is the body for POST /v2/snapshot/restore (handoff §3.4:
+// "{volume_uuid, snapshot, path}; path=卷内相对路径").
+type restoreRequest struct {
+	VolumeUUID string `json:"volume_uuid"`
+	Snapshot   string `json:"snapshot"`
+	Path       string `json:"path"`
 }
 
 type snapshotPolicyRequest struct {
@@ -162,9 +173,9 @@ func writeSnapshotResult(ctx echo.Context, status, code int, message string, dat
 // treated as an opaque backend failure.
 func writeSnapshotError(ctx echo.Context, err error) error {
 	switch {
-	case errors.Is(err, snapshot.ErrVolumeNotFound), errors.Is(err, snapshot.ErrSnapshotNotFound):
+	case errors.Is(err, snapshot.ErrVolumeNotFound), errors.Is(err, snapshot.ErrSnapshotNotFound), errors.Is(err, snapshot.ErrRestoreSourceNotFound):
 		return writeSnapshotResult(ctx, http.StatusNotFound, common_err.INVALID_PARAMS, err.Error(), nil)
-	case errors.Is(err, snapshot.ErrVolumeNotBtrfs), errors.Is(err, snapshot.ErrVolumeNotMounted), errors.Is(err, snapshot.ErrInvalidSnapshotName):
+	case errors.Is(err, snapshot.ErrVolumeNotBtrfs), errors.Is(err, snapshot.ErrVolumeNotMounted), errors.Is(err, snapshot.ErrInvalidSnapshotName), errors.Is(err, snapshot.ErrInvalidRestorePath):
 		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, err.Error(), nil)
 	case errors.Is(err, snapshot.ErrVolumeNotSupported):
 		return writeSnapshotResult(ctx, http.StatusConflict, common_err.SERVICE_ERROR, err.Error(), nil)
@@ -297,4 +308,67 @@ func putSnapshotPolicy(ctx echo.Context) error {
 		return writeSnapshotError(ctx, err)
 	}
 	return writeSnapshotResult(ctx, http.StatusOK, common_err.SUCCESS, common_err.GetMsg(common_err.SUCCESS), nil)
+}
+
+// restoreSnapshotFile handles POST /v2/snapshot/restore
+// ({volume_uuid, snapshot, path}, path relative to the volume's root). This
+// is the payoff of the whole snapshot feature — see snapshot.Service.Restore
+// for the full safety contract (never overwrites, path escape defended on
+// both the snapshot and live-volume sides, snapshot must genuinely exist on
+// disk).
+func restoreSnapshotFile(ctx echo.Context) error {
+	var req restoreRequest
+	if err := ctx.Bind(&req); err != nil {
+		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, err.Error(), nil)
+	}
+	vol, ok := resolveVolumeParam(ctx, req.VolumeUUID)
+	if !ok {
+		return nil
+	}
+	if req.Snapshot == "" || req.Path == "" {
+		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, "snapshot and path are required", nil)
+	}
+
+	result, err := service.MyService.Snapshot().Restore(ctx.Request().Context(), vol, req.Snapshot, req.Path)
+	if err != nil {
+		return writeSnapshotError(ctx, err)
+	}
+	return writeSnapshotResult(ctx, http.StatusOK, common_err.SUCCESS, common_err.GetMsg(common_err.SUCCESS), result)
+}
+
+// listFileVersions handles GET /v2/snapshot/file-versions?path= (handoff
+// §3.4): path is an absolute path (as the file browser would show it),
+// which is first mapped to whichever known volume's mount point is its
+// longest matching prefix (snapshot.FindVolumeForPath), then to that
+// volume's relative path, before walking up to snapshot.MaxFileVersionsSnapshots
+// of that volume's most recent snapshots.
+func listFileVersions(ctx echo.Context) error {
+	path := ctx.QueryParam("path")
+	if path == "" {
+		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, "path is required", nil)
+	}
+	if !filepath.IsAbs(path) {
+		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, "path must be an absolute path", nil)
+	}
+
+	volumes, err := currentVolumes()
+	if err != nil {
+		logger.Error("snapshot: failed to list volumes", zap.Error(err))
+		return writeSnapshotResult(ctx, http.StatusInternalServerError, common_err.SERVICE_ERROR, err.Error(), nil)
+	}
+
+	found, relPath, err := snapshot.FindVolumeForPath(volumes, path)
+	if err != nil {
+		return writeSnapshotError(ctx, err)
+	}
+	vol, err := service.MyService.Snapshot().ResolveVolume(volumes, found.UUID)
+	if err != nil {
+		return writeSnapshotError(ctx, err)
+	}
+
+	versions, err := service.MyService.Snapshot().FileVersions(ctx.Request().Context(), vol, relPath)
+	if err != nil {
+		return writeSnapshotError(ctx, err)
+	}
+	return writeSnapshotResult(ctx, http.StatusOK, common_err.SUCCESS, common_err.GetMsg(common_err.SUCCESS), versions)
 }

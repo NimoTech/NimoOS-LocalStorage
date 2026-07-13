@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	commonmodel "github.com/NimoTech/NimoOS-Common/model"
@@ -52,19 +54,40 @@ func (f *fakeServices) RAID() v2.RAIDService        { return f.raid }
 func (f *fakeServices) Snapshot() *snapshot.Service { return f.snap }
 
 // installFakeServices points service.MyService at a fake for the duration
-// of the test, restoring the previous value on cleanup.
+// of the test, restoring the previous value on cleanup. Paths uses the real
+// OSPathChecker (btrfsVolume's MountPoint is a real t.TempDir(), matching
+// service/snapshot's own restore/file-versions test convention) and Copier
+// is a FakeCopier so no test ever shells out to a real `cp`.
 func installFakeServices(t *testing.T, raids []*svcmodel.RAIDArray) (*snapshot.FakeRunner, *snapshot.FakeStore) {
+	t.Helper()
+	runner, store, _ := installFakeServicesWithCopier(t, raids)
+	return runner, store
+}
+
+// installFakeServicesWithCopier is installFakeServices's sibling for tests
+// that need to assert on the copy calls Restore made (e.g. reflink-fallback
+// wiring) or inject a copy failure.
+func installFakeServicesWithCopier(t *testing.T, raids []*svcmodel.RAIDArray) (*snapshot.FakeRunner, *snapshot.FakeStore, *snapshot.FakeCopier) {
 	t.Helper()
 	runner := snapshot.NewFakeRunner()
 	store := snapshot.NewFakeStore()
-	svc := &snapshot.Service{Runner: runner, Store: store, Persister: snapshot.NewFakeFstabPersister()}
+	copier := snapshot.NewFakeCopier()
+	svc := &snapshot.Service{
+		Runner:    runner,
+		Store:     store,
+		Persister: snapshot.NewFakeFstabPersister(),
+		Pause:     snapshot.NewPauseState(),
+		Paths:     snapshot.OSPathChecker{},
+		Copier:    copier,
+		Clock:     snapshot.RealClock{},
+	}
 
 	prev := service.MyService
 	fake := &fakeServices{raid: &fakeRAIDService{arrays: raids}, snap: svc}
 	service.MyService = fake
 	t.Cleanup(func() { service.MyService = prev })
 
-	return runner, store
+	return runner, store, copier
 }
 
 // btrfsVolume returns a RAIDArray backed by a real temp directory (so
@@ -389,5 +412,173 @@ func TestPutSnapshotPolicyEnableSucceedsForSupportedVolume(t *testing.T) {
 	rec := doRequest(router, http.MethodPut, "/v2/snapshot/policy", body, true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- POST /v2/snapshot/restore ---
+
+// seedRestorableSnapshot creates a real snapshot subdirectory containing
+// "report.docx" under vol's .snapshots, and registers it with both the fake
+// runner (so ListSubvolumes/reconciliation see it) and returns its name.
+func seedRestorableSnapshot(t *testing.T, runner *snapshot.FakeRunner, vol *svcmodel.RAIDArray) string {
+	t.Helper()
+	name := "20260712T030000Z_manual_before-move"
+	dir := vol.MountPoint + "/.snapshots/" + name
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/report.docx", []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner.ListResult[vol.MountPoint] = []snapshot.SubvolumeEntry{
+		{ID: "300", Path: "@snapshots/" + name},
+	}
+	return name
+}
+
+func TestRestoreSnapshotFileSucceeds(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, copier := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"report.docx"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	result := decodeResult(t, rec)
+	row := result.Data.(map[string]interface{})
+	restoredPath, _ := row["restored_path"].(string)
+	if restoredPath == "" || !strings.Contains(restoredPath, ".restored-") {
+		t.Fatalf("expected a non-empty .restored-<ts> path, got %v", row)
+	}
+	if len(copier.Calls) != 1 {
+		t.Fatalf("expected 1 copy call, got %+v", copier.Calls)
+	}
+}
+
+func TestRestoreSnapshotFileRequiresSnapshotAndPath(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, _ := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRestoreSnapshotFileRejectsPathTraversal(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, copier := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"../../../etc/passwd"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt for a traversal attempt, got %+v", copier.Calls)
+	}
+}
+
+func TestRestoreSnapshotFileRejectsUnknownSnapshotName(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, _ := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"not-one-of-ours","path":"report.docx"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRestoreSnapshotFileNotFoundOnDiskIs404(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, _ := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"20260101T000000Z_manual_ghost","path":"report.docx"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRestoreSnapshotFileSourceNotFoundIs404(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, _ := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"missing.txt"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- GET /v2/snapshot/file-versions ---
+
+func TestListFileVersionsSucceeds(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, _ := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	seedRestorableSnapshot(t, runner, vol)
+	router := InitSnapshotRouter()
+
+	target := "/v2/snapshot/file-versions?path=" + vol.MountPoint + "/report.docx"
+	rec := doRequest(router, http.MethodGet, target, nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	result := decodeResult(t, rec)
+	data, ok := result.Data.([]interface{})
+	if !ok || len(data) != 1 {
+		t.Fatalf("expected 1 file version, got %#v", result.Data)
+	}
+}
+
+func TestListFileVersionsRequiresPath(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot/file-versions", nil, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListFileVersionsRequiresAbsolutePath(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot/file-versions?path=relative/report.docx", nil, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListFileVersionsUnknownPathIs404(t *testing.T) {
+	vol := btrfsVolume(t)
+	installFakeServices(t, []*svcmodel.RAIDArray{vol})
+	router := InitSnapshotRouter()
+
+	rec := doRequest(router, http.MethodGet, "/v2/snapshot/file-versions?path=/no/such/volume/file.txt", nil, true)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }

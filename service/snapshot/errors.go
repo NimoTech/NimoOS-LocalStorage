@@ -26,4 +26,13 @@ var (
 	// ErrSnapshotNotFound means the named snapshot doesn't currently exist
 	// on disk for the given volume (post-reconciliation).
 	ErrSnapshotNotFound = errors.New("snapshot: snapshot not found")
+	// ErrInvalidRestorePath means a caller-supplied restore/file-versions
+	// "path" is malformed or would escape the volume/snapshot boundary:
+	// empty, absolute, "../" traversal, or a symlink redirecting outside
+	// the volume's mount point or the snapshot's directory (see
+	// resolveWithinDir in restore_path.go).
+	ErrInvalidRestorePath = errors.New("snapshot: invalid restore path")
+	// ErrRestoreSourceNotFound means the requested path does not exist
+	// inside the given (on-disk, validated) snapshot.
+	ErrRestoreSourceNotFound = errors.New("snapshot: restore source not found in snapshot")
 )
