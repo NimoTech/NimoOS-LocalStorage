@@ -26,7 +26,40 @@ import (
 	model2 "github.com/NimoTech/NimoOS-LocalStorage/service/model"
 
 	"github.com/NimoTech/NimoOS-LocalStorage/service"
+	"github.com/NimoTech/NimoOS-LocalStorage/service/snapshot"
 )
+
+// isSnapshotInfraMount reports whether mp is the mountpoint of the btrfs
+// @snapshots infrastructure subvolume (service/snapshot.SnapshotsMountSubdir,
+// ".snapshots"). This is infrastructure, not user storage — it must never be
+// surfaced as a regular disk child, same as ".system_data" is hidden from
+// the file browser by convention.
+//
+// The discriminator is the mountpoint's basename rather than the btrfs
+// "subvol=/@snapshots" mount option: lsblk (service.MyService.Disk().LSBLK,
+// the only data source GetStorageList has) does not report mount options,
+// so the subvol-based check isn't available in this code path.
+func isSnapshotInfraMount(mp string) bool {
+	return mp != "" && filepath.Base(mp) == snapshot.SnapshotsMountSubdir
+}
+
+// filterSnapshotChildren strips .snapshots infrastructure mounts out of a
+// disk's lsblk children before they become storage entries. It must run
+// unconditionally, independent of the "system" query param: on md-RAID the
+// same @snapshots subvolume is mounted once per member disk, so without
+// this filter it would appear once per member (verified live: 3 identical
+// ".snapshots" entries for /dev/sda, /dev/sdc, /dev/sdd), each rendered by
+// the Storage Manager UI with Format/Remove buttons.
+func filterSnapshotChildren(children []model1.LSBLKModel) []model1.LSBLKModel {
+	out := make([]model1.LSBLKModel, 0, len(children))
+	for _, c := range children {
+		if isSnapshotInfraMount(c.MountPoint) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
 
 func GetStorageList(ctx echo.Context) error {
 	system := ctx.QueryParam("system")
@@ -68,6 +101,7 @@ func GetStorageList(ctx echo.Context) error {
 		if len(currentDisk.Children) == 0 && service.IsDiskSupported(currentDisk) {
 			currentDisk.Children = append(currentDisk.Children, currentDisk)
 		}
+		currentDisk.Children = filterSnapshotChildren(currentDisk.Children)
 		for _, blkChild := range currentDisk.Children {
 			if err == nil {
 				if blkChild.Path == df.FileSystem {
