@@ -20,6 +20,13 @@ type CreateRAIDRequest struct {
 	DiskPaths  []string `json:"disk_paths"`
 	ChunkKB    int      `json:"chunk_kb"`
 	Filesystem string   `json:"filesystem"`
+	// EnableSnapshots optionally auto-enables btrfs snapshot protection for
+	// the newly created array once it's formatted and mounted (task B5).
+	// nil (the field omitted, e.g. by an older client) and true both enable
+	// it — this is the default; only an explicit false skips it. Best
+	// effort: failure to enable never fails RAID creation itself, see
+	// enableSnapshotsForNewRAID.
+	EnableSnapshots *bool `json:"enable_snapshots"`
 }
 
 type ReplaceDiskRequest struct {
@@ -171,6 +178,7 @@ func CreateRAIDArray(ctx echo.Context) error {
 			t.Status = "done"
 			t.Progress = 100
 			t.RaidID = &result.ID
+			enableSnapshotsForNewRAID(req.EnableSnapshots, result)
 		}
 		storeTask(t)
 		scheduleTaskCleanup(taskID)
