@@ -2,6 +2,7 @@ package v2
 
 import (
 	"context"
+	"strings"
 
 	"github.com/NimoTech/NimoOS-Common/utils/logger"
 	"github.com/NimoTech/NimoOS-LocalStorage/service"
@@ -26,6 +27,23 @@ func enableSnapshotsForNewRAID(enable *bool, raid *svcmodel.RAIDArray) {
 		return
 	}
 	if raid == nil {
+		return
+	}
+
+	// Snapshots are btrfs-only. Skip unconditionally for any other
+	// filesystem (e.g. ext4) — this is the RAID's recorded filesystem
+	// choice from creation, not a fresh probe. This is expected, routine
+	// behavior for a non-btrfs array, not a failure, so it's logged at
+	// info level rather than as a warning/error; it also means
+	// SavePolicy/EnsureSnapshotsMount are never invoked for such a volume,
+	// so no enabled=true policy row can be persisted for it through this
+	// path (belt-and-suspenders: EnsureSnapshotsMount itself already
+	// refuses non-btrfs volumes before SavePolicy would persist anything).
+	if !strings.EqualFold(raid.Filesystem, "btrfs") {
+		logger.Info("skipping snapshot auto-enable: RAID array is not btrfs",
+			zap.Uint("raid_id", raid.ID),
+			zap.String("volume_uuid", raid.UUID),
+			zap.String("filesystem", raid.Filesystem))
 		return
 	}
 

@@ -19,6 +19,13 @@ type FakeStore struct {
 	nextID    uint
 	snapshots map[uint]model.Snapshot
 	policies  map[string]model.SnapshotPolicy
+
+	// SavePolicyCalls counts invocations of SavePolicy, for tests asserting
+	// it was (or wasn't) called at all — e.g. task B5's non-btrfs skip,
+	// where GetOrCreatePolicy's own on-demand default-row creation would
+	// otherwise make the policies map non-empty even without a SavePolicy
+	// call.
+	SavePolicyCalls int
 }
 
 var _ FullStore = (*FakeStore)(nil)
@@ -87,6 +94,7 @@ func (s *FakeStore) GetOrCreatePolicy(volumeUUID string) (*model.SnapshotPolicy,
 func (s *FakeStore) SavePolicy(policy model.SnapshotPolicy) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.SavePolicyCalls++
 	s.policies[policy.VolumeUUID] = policy
 	return nil
 }
