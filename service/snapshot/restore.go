@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // maxRestoreSuffixAttempts bounds computeRestoreDestination's numbering
@@ -21,20 +22,29 @@ type RestoreResult struct {
 // overwrites an existing path (handoff §2.1/§6: "取回...不覆盖现有同名文
 // 件"/"restore 永不覆盖:目标已存在...同名时追加序号"):
 //
-//   - first choice: "<name>.restored-<ts>"
-//   - if that already exists: "<name>.restored-<ts>-2", then "-3", ...
+//   - regular files with a recognizable extension: the ".restored-<ts>"
+//     marker is inserted BEFORE the extension, so the restored copy keeps
+//     the extension the OS/UI use to recognize its type and open it —
+//     "photo.jpg" -> "photo.restored-<ts>.jpg" (numbered on collision:
+//     "photo.restored-<ts>-2.jpg", then "-3", ...). See splitRestoreExt for
+//     exactly what counts as "an extension" (dotfiles and extensionless
+//     names don't).
+//   - directories, dotfiles, and extensionless files: the marker is
+//     appended at the end as before — "<name>.restored-<ts>" (numbered the
+//     same way).
+//
+// isDir must reflect the SOURCE's type (the restore flow already stats the
+// source to confirm it exists — reuse that result rather than re-stating
+// here) since a directory named e.g. "archive.tar" must not have its name
+// split just because it contains a dot.
 //
 // This is the actual safety mechanism (not just documentation): Copy itself
 // (copy.go) performs no existence check of its own, so whatever path this
 // function returns is guaranteed not to collide at the moment it was
 // checked.
-func computeRestoreDestination(paths PathChecker, destDir, name, ts string) (string, error) {
-	base := fmt.Sprintf("%s.restored-%s", name, ts)
+func computeRestoreDestination(paths PathChecker, destDir, name, ts string, isDir bool) (string, error) {
 	for n := 1; n <= maxRestoreSuffixAttempts; n++ {
-		candidate := base
-		if n > 1 {
-			candidate = fmt.Sprintf("%s-%d", base, n)
-		}
+		candidate := restoreCandidateName(name, ts, isDir, n)
 		full := filepath.Join(destDir, candidate)
 		exists, err := paths.Exists(full)
 		if err != nil {
@@ -45,6 +55,48 @@ func computeRestoreDestination(paths PathChecker, destDir, name, ts string) (str
 		}
 	}
 	return "", fmt.Errorf("too many existing restore destinations for %s (giving up after %d attempts)", name, maxRestoreSuffixAttempts)
+}
+
+// restoreCandidateName builds the nth candidate name (n starting at 1, so
+// n==1 is the unnumbered first choice) for restoring name at timestamp ts.
+// See computeRestoreDestination for the placement rules this implements.
+func restoreCandidateName(name, ts string, isDir bool, n int) string {
+	marker := ".restored-" + ts
+	if n > 1 {
+		marker = fmt.Sprintf(".restored-%s-%d", ts, n)
+	}
+	if isDir {
+		return name + marker
+	}
+	stem, ext, hasExt := splitRestoreExt(name)
+	if !hasExt {
+		return name + marker
+	}
+	return stem + marker + ext
+}
+
+// splitRestoreExt splits name into a stem and extension for the purpose of
+// inserting the ".restored-<ts>" marker before the extension instead of
+// after it. It reports hasExt=false (name should be treated as
+// extensionless, i.e. the marker is simply appended) when:
+//
+//   - name contains no "." at all ("README", extensionless), or
+//   - name's only "." is a leading one, e.g. ".bashrc" — a dotfile, not an
+//     extension.
+//
+// Otherwise the split point is the LAST "." in name, so a name with
+// multiple dots only has its final segment treated as "the extension" —
+// e.g. "archive.tar.gz" splits into stem "archive.tar" and ext ".gz"
+// (-> "archive.tar.restored-<ts>.gz"), and a name like ".hidden.txt" (a
+// leading dot AND another dot) splits into ".hidden" / ".txt". Not
+// recognizing compound extensions like ".tar.gz" as a single unit is an
+// accepted tradeoff for keeping this split simple.
+func splitRestoreExt(name string) (stem, ext string, hasExt bool) {
+	i := strings.LastIndexByte(name, '.')
+	if i <= 0 {
+		return name, "", false
+	}
+	return name[:i], name[i:], true
 }
 
 // Restore copies relPath (a path relative to volume's root) out of
@@ -103,9 +155,11 @@ func (s *Service) Restore(ctx context.Context, volume VolumeInfo, snapshotName, 
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%w: %v", ErrInvalidRestorePath, err)
 	}
-	if _, ok, err := s.Paths.Stat(srcPath); err != nil {
+	srcInfo, ok, err := s.Paths.Stat(srcPath)
+	if err != nil {
 		return RestoreResult{}, fmt.Errorf("stat restore source: %w", err)
-	} else if !ok {
+	}
+	if !ok {
 		return RestoreResult{}, ErrRestoreSourceNotFound
 	}
 
@@ -129,7 +183,7 @@ func (s *Service) Restore(ctx context.Context, volume VolumeInfo, snapshotName, 
 
 	ts := s.clock().Now().UTC().Format(nameTimeLayout)
 	name := filepath.Base(relClean)
-	destPath, err := computeRestoreDestination(s.Paths, destParent, name, ts)
+	destPath, err := computeRestoreDestination(s.Paths, destParent, name, ts, srcInfo.IsDir)
 	if err != nil {
 		return RestoreResult{}, err
 	}
