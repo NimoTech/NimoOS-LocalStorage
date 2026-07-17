@@ -42,6 +42,16 @@ type Service struct {
 	// tests that do call Restore inject a FakeClock for deterministic
 	// destination names.
 	Clock Clock
+	// TempSuffix generates the random-looking suffix Restore's
+	// on_conflict=overwrite path (restoreOverwrite, restore.go) appends to
+	// build its "<name>.nimoos-restoring-<suffix>" temporary file name.
+	// nil-safe: a nil TempSuffix (the default for every Service that never
+	// sets it, including NewService's production Service) falls back to
+	// randomHexSuffix, a crypto/rand-backed generator. Tests that need a
+	// predictable temporary path (to key a FakeCopier failure injection by
+	// exact dest string, or to assert the exact Rename call made) inject a
+	// fixed or sequenced func here instead.
+	TempSuffix func() string
 }
 
 func (s *Service) clock() Clock {
@@ -49,6 +59,14 @@ func (s *Service) clock() Clock {
 		return RealClock{}
 	}
 	return s.Clock
+}
+
+// tempSuffix resolves TempSuffix's nil-means-randomHexSuffix default.
+func (s *Service) tempSuffix() string {
+	if s.TempSuffix != nil {
+		return s.TempSuffix()
+	}
+	return randomHexSuffix()
 }
 
 // NewService returns the production Service, backed by the real btrfs/mount

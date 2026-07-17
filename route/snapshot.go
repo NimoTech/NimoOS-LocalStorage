@@ -86,11 +86,35 @@ type createSnapshotRequest struct {
 }
 
 // restoreRequest is the body for POST /v2/snapshot/restore (handoff §3.4:
-// "{volume_uuid, snapshot, path}; path=卷内相对路径").
+// "{volume_uuid, snapshot, path}; path=卷内相对路径"). Two optional fields
+// extend it while staying backward compatible (both default to the
+// original behavior when omitted):
+//
+//   - DestDir: an absolute path to an existing directory to restore into,
+//     overriding the default of restoring back to path's original location
+//     under the source volume's mount point. Validated by
+//     snapshot.resolveRestoreDestDir: must already exist, and be located
+//     under some currently mounted, snapshot-supported (btrfs) volume's
+//     mount point (not necessarily the source volume — cross-volume
+//     restore is allowed).
+//   - WithMarker: nil or true (the default) keeps inserting the
+//     ".restored-<ts>" marker into the restored name; false restores under
+//     the original name instead (collisions still never overwrite — see
+//     snapshot.RestoreOptions).
+//   - OnConflict: "" or "keep_both" (the default) reproduces the original,
+//     never-overwrite (numbered-suffix) behavior unchanged. "overwrite" is
+//     for a caller (the file browser) that already ran its own pre-restore
+//     conflict check and is telling Restore the user explicitly chose to
+//     replace the existing file — see snapshot.RestoreOptions.OnConflict
+//     for the full contract, including why it only supports files, never
+//     directories.
 type restoreRequest struct {
 	VolumeUUID string `json:"volume_uuid"`
 	Snapshot   string `json:"snapshot"`
 	Path       string `json:"path"`
+	DestDir    string `json:"dest_dir"`
+	WithMarker *bool  `json:"with_marker"`
+	OnConflict string `json:"on_conflict"`
 }
 
 type snapshotPolicyRequest struct {
@@ -175,7 +199,7 @@ func writeSnapshotError(ctx echo.Context, err error) error {
 	switch {
 	case errors.Is(err, snapshot.ErrVolumeNotFound), errors.Is(err, snapshot.ErrSnapshotNotFound), errors.Is(err, snapshot.ErrRestoreSourceNotFound):
 		return writeSnapshotResult(ctx, http.StatusNotFound, common_err.INVALID_PARAMS, err.Error(), nil)
-	case errors.Is(err, snapshot.ErrVolumeNotBtrfs), errors.Is(err, snapshot.ErrVolumeNotMounted), errors.Is(err, snapshot.ErrInvalidSnapshotName), errors.Is(err, snapshot.ErrInvalidRestorePath):
+	case errors.Is(err, snapshot.ErrVolumeNotBtrfs), errors.Is(err, snapshot.ErrVolumeNotMounted), errors.Is(err, snapshot.ErrInvalidSnapshotName), errors.Is(err, snapshot.ErrInvalidRestorePath), errors.Is(err, snapshot.ErrInvalidRestoreDestDir), errors.Is(err, snapshot.ErrInvalidRestoreOnConflict), errors.Is(err, snapshot.ErrRestoreOverwriteUnsupported):
 		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, err.Error(), nil)
 	case errors.Is(err, snapshot.ErrVolumeNotSupported), errors.Is(err, snapshot.ErrRestoreDestinationExists):
 		return writeSnapshotResult(ctx, http.StatusConflict, common_err.SERVICE_ERROR, err.Error(), nil)
@@ -311,11 +335,13 @@ func putSnapshotPolicy(ctx echo.Context) error {
 }
 
 // restoreSnapshotFile handles POST /v2/snapshot/restore
-// ({volume_uuid, snapshot, path}, path relative to the volume's root). This
-// is the payoff of the whole snapshot feature — see snapshot.Service.Restore
-// for the full safety contract (never overwrites, path escape defended on
-// both the snapshot and live-volume sides, snapshot must genuinely exist on
-// disk).
+// ({volume_uuid, snapshot, path, dest_dir?, with_marker?, on_conflict?},
+// path relative to the volume's root). This is the payoff of the whole
+// snapshot feature — see snapshot.Service.Restore for the full safety
+// contract (never overwrites unless on_conflict=overwrite was explicitly
+// requested — and even then, only ever via an atomic rename, never an
+// in-place write; path escape defended on both the snapshot and live-volume
+// (or caller-chosen dest_dir) sides; snapshot must genuinely exist on disk).
 func restoreSnapshotFile(ctx echo.Context) error {
 	var req restoreRequest
 	if err := ctx.Bind(&req); err != nil {
@@ -329,7 +355,18 @@ func restoreSnapshotFile(ctx echo.Context) error {
 		return writeSnapshotResult(ctx, http.StatusBadRequest, common_err.INVALID_PARAMS, "snapshot and path are required", nil)
 	}
 
-	result, err := service.MyService.Snapshot().Restore(ctx.Request().Context(), vol, req.Snapshot, req.Path)
+	// dest_dir is validated against every currently known volume, not just
+	// the restore's source volume — a dest_dir override may legitimately
+	// point at a different (also snapshot-supported, currently mounted)
+	// volume than the one being restored from.
+	volumes, err := currentVolumes()
+	if err != nil {
+		logger.Error("snapshot: failed to list volumes", zap.Error(err))
+		return writeSnapshotResult(ctx, http.StatusInternalServerError, common_err.SERVICE_ERROR, err.Error(), nil)
+	}
+
+	opts := snapshot.RestoreOptions{DestDir: req.DestDir, WithMarker: req.WithMarker, OnConflict: req.OnConflict}
+	result, err := service.MyService.Snapshot().Restore(ctx.Request().Context(), volumes, vol, req.Snapshot, req.Path, opts)
 	if err != nil {
 		return writeSnapshotError(ctx, err)
 	}

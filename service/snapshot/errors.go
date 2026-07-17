@@ -43,4 +43,24 @@ var (
 	// a fresh call to Restore will get a freshly (re-)computed, still
 	// collision-free destination from computeRestoreDestination.
 	ErrRestoreDestinationExists = errors.New("snapshot: restore destination already exists")
+	// ErrInvalidRestoreDestDir means a caller-supplied restore "dest_dir"
+	// override (POST /v2/snapshot/restore) failed validation: empty or not
+	// an absolute path, not located under any currently known volume's
+	// mount point, that volume isn't a currently mounted, snapshot-supported
+	// (btrfs) volume, a symlink redirecting outside that volume's real
+	// mount point, or the directory doesn't already exist (dest_dir is
+	// never auto-created) — see resolveRestoreDestDir in restore_path.go.
+	ErrInvalidRestoreDestDir = errors.New("snapshot: invalid restore destination directory")
+	// ErrInvalidRestoreOnConflict means a caller-supplied restore
+	// "on_conflict" value (POST /v2/snapshot/restore) is neither empty,
+	// "keep_both", nor "overwrite" — see RestoreOptions.onConflict.
+	ErrInvalidRestoreOnConflict = errors.New("snapshot: invalid restore on_conflict value")
+	// ErrRestoreOverwriteUnsupported means on_conflict=overwrite was
+	// requested but either the restore source or the existing destination
+	// it would replace is a directory: the atomic copy-to-temp-then-rename
+	// replacement this feature performs is only safe for a single file (see
+	// Service.restoreOverwrite's doc comment for why this doesn't generalize
+	// to directories). Callers hitting this should fall back to
+	// on_conflict=keep_both.
+	ErrRestoreOverwriteUnsupported = errors.New("snapshot: overwrite is not supported for directories, use on_conflict=keep_both")
 )
