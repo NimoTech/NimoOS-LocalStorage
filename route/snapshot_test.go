@@ -515,6 +515,129 @@ func TestRestoreSnapshotFileNotFoundOnDiskIs404(t *testing.T) {
 	}
 }
 
+// TestRestoreSnapshotFileWithDestDirSucceeds proves the dest_dir request
+// field is threaded through to snapshot.Service.Restore end-to-end: the
+// restored_path in the response lands under the caller-chosen directory
+// instead of the snapshot's original relative location.
+func TestRestoreSnapshotFileWithDestDirSucceeds(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, copier := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	destDir := vol.MountPoint + "/chosen-destination"
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"report.docx","dest_dir":"` + destDir + `"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	result := decodeResult(t, rec)
+	row := result.Data.(map[string]interface{})
+	restoredPath, _ := row["restored_path"].(string)
+	if !strings.HasPrefix(restoredPath, destDir+"/") {
+		t.Fatalf("expected restored_path under %q, got %v", destDir, row)
+	}
+	if len(copier.Calls) != 1 {
+		t.Fatalf("expected 1 copy call, got %+v", copier.Calls)
+	}
+}
+
+// TestRestoreSnapshotFileWithMarkerFalseSucceeds proves the with_marker
+// request field, when false, restores the file under its original name
+// (no ".restored-<ts>" anywhere in restored_path).
+func TestRestoreSnapshotFileWithMarkerFalseSucceeds(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, _ := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"report.docx","with_marker":false}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	result := decodeResult(t, rec)
+	row := result.Data.(map[string]interface{})
+	restoredPath, _ := row["restored_path"].(string)
+	want := vol.MountPoint + "/report.docx"
+	if restoredPath != want {
+		t.Fatalf("got restored_path %q, want %q", restoredPath, want)
+	}
+}
+
+// TestRestoreSnapshotFileRejectsRelativeDestDir proves an invalid dest_dir
+// (relative, so it can never be validated against a volume's mount point)
+// is rejected with 400 rather than silently falling back to the default
+// location or attempting a copy.
+func TestRestoreSnapshotFileRejectsRelativeDestDir(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, copier := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"report.docx","dest_dir":"relative/dir"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", copier.Calls)
+	}
+}
+
+// TestRestoreSnapshotFileRejectsNonexistentDestDir proves dest_dir is never
+// auto-created at the HTTP layer either: a syntactically valid path under
+// the known volume that just doesn't exist yet is a 400, not a silent
+// mkdir.
+func TestRestoreSnapshotFileRejectsNonexistentDestDir(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, copier := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	router := InitSnapshotRouter()
+
+	missing := vol.MountPoint + "/does-not-exist-yet"
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"report.docx","dest_dir":"` + missing + `"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", copier.Calls)
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Fatalf("expected dest_dir to remain uncreated, got stat error %v", statErr)
+	}
+}
+
+// TestRestoreSnapshotFileRejectsDestDirOutsideAnyVolume proves a dest_dir
+// that's an absolute, existing directory but not under ANY currently known
+// volume's mount point is still a 400 (not silently accepted as "some
+// arbitrary path on disk").
+func TestRestoreSnapshotFileRejectsDestDirOutsideAnyVolume(t *testing.T) {
+	vol := btrfsVolume(t)
+	runner, _, copier := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
+	runner.SeedMounted(vol.DevicePath, vol.MountPoint)
+	name := seedRestorableSnapshot(t, runner, vol)
+	outside := t.TempDir()
+	router := InitSnapshotRouter()
+
+	body := []byte(`{"volume_uuid":"vol-uuid-1","snapshot":"` + name + `","path":"report.docx","dest_dir":"` + outside + `"}`)
+	rec := doRequest(router, http.MethodPost, "/v2/snapshot/restore", body, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", copier.Calls)
+	}
+}
+
 func TestRestoreSnapshotFileSourceNotFoundIs404(t *testing.T) {
 	vol := btrfsVolume(t)
 	runner, _, _ := installFakeServicesWithCopier(t, []*svcmodel.RAIDArray{vol})
