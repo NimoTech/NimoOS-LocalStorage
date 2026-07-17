@@ -2,15 +2,54 @@ package snapshot
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // maxRestoreSuffixAttempts bounds computeRestoreDestination's numbering
 // search, so a pathological pile-up of prior ".restored-*" files can't spin
 // forever.
 const maxRestoreSuffixAttempts = 10000
+
+// maxOverwriteTempAttempts bounds restoreOverwrite's search for an unused
+// "<name>.nimoos-restoring-<suffix>" temporary path — far smaller than
+// maxRestoreSuffixAttempts because a collision here would mean the random
+// suffix itself collided (astronomically unlikely with randomHexSuffix's
+// 8 bytes of entropy), not an expected pile-up of prior restores the way
+// numbered ".restored-<ts>-<n>" names can accumulate.
+const maxOverwriteTempAttempts = 10
+
+// restoreTempInfix is inserted between a restore-in-progress temporary
+// file's original name and its random suffix — see restoreOverwrite.
+const restoreTempInfix = ".nimoos-restoring-"
+
+// RestoreConflictKeepBoth and RestoreConflictOverwrite are the two valid
+// values of RestoreOptions.OnConflict (POST /v2/snapshot/restore's optional
+// "on_conflict" request field). See RestoreOptions.OnConflict's doc comment.
+const (
+	RestoreConflictKeepBoth  = "keep_both"
+	RestoreConflictOverwrite = "overwrite"
+)
+
+// randomHexSuffix returns a short crypto/rand-backed hex string for
+// restoreOverwrite's temporary file name — collision-resistant enough that
+// overwriteTempPath's own Exists-check-and-retry loop is just defense in
+// depth, not the primary uniqueness guarantee.
+func randomHexSuffix() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing is not something production should ever hit
+		// in practice; if it somehow does, fall back to a wall-clock-based
+		// suffix so overwrite still works (with a weaker, but non-zero,
+		// uniqueness guarantee) rather than becoming unusable entirely.
+		return fmt.Sprintf("fallback-%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
 
 // RestoreResult is the response for POST /v2/snapshot/restore.
 type RestoreResult struct {
@@ -36,12 +75,55 @@ type RestoreOptions struct {
 	// instead — collisions are still never overwritten: they get a bare
 	// numeric "-<n>" suffix (in the same before-the-extension position the
 	// marker would otherwise occupy) rather than skipping or clobbering.
+	//
+	// WithMarker is ignored when OnConflict is RestoreConflictOverwrite:
+	// overwrite always targets the literal original name (see OnConflict),
+	// since that's the exact name the caller's pre-restore conflict check
+	// would have compared against.
 	WithMarker *bool
+	// OnConflict selects how Restore resolves a destination-name conflict,
+	// for a caller (the file browser) that already ran its own pre-restore
+	// check of the destination and is now telling Restore what the user
+	// explicitly chose to do about it. Valid values are "" (defaults to
+	// RestoreConflictKeepBoth) and the two named constants below; any other
+	// value is rejected with ErrInvalidRestoreOnConflict:
+	//
+	//   - RestoreConflictKeepBoth (the default, and the ONLY behavior this
+	//     feature had before OnConflict existed): unchanged — the
+	//     numbered/marked destination computeRestoreDestination picks,
+	//     controlled by WithMarker as already documented above.
+	//   - RestoreConflictOverwrite: restore under the literal original name
+	//     (destParent/name, no marker, no numbering), REPLACING an existing
+	//     same-named destination instead of numbering a new file alongside
+	//     it — but only when that's safe to do atomically (see
+	//     Service.restoreOverwrite): both the source and any existing
+	//     destination must be non-directories, or Restore fails with
+	//     ErrRestoreOverwriteUnsupported instead of silently falling back to
+	//     keep_both's behavior. A nonexistent destination is copied to
+	//     directly, identical to keep_both's unnumbered first choice.
+	//
+	// OnConflict is a one-shot, this-call-only choice: it never changes
+	// Restore's default (keep_both) behavior for any other request, and it
+	// never weakens keep_both's own never-overwrite guarantee.
+	OnConflict string
 }
 
 // withMarker resolves opts.WithMarker's nil-means-true default.
 func (o RestoreOptions) withMarker() bool {
 	return o.WithMarker == nil || *o.WithMarker
+}
+
+// onConflict validates and resolves opts.OnConflict's ""-means-keep_both
+// default, rejecting anything other than the two documented values.
+func (o RestoreOptions) onConflict() (string, error) {
+	switch o.OnConflict {
+	case "", RestoreConflictKeepBoth:
+		return RestoreConflictKeepBoth, nil
+	case RestoreConflictOverwrite:
+		return RestoreConflictOverwrite, nil
+	default:
+		return "", fmt.Errorf("%w: %q (must be %q or %q)", ErrInvalidRestoreOnConflict, o.OnConflict, RestoreConflictKeepBoth, RestoreConflictOverwrite)
+	}
 }
 
 // computeRestoreDestination picks the destination for restoring a file or
@@ -188,6 +270,11 @@ func splitRestoreExt(name string) (stem, ext string, hasExt bool) {
 // dest_dir override may legitimately point at a different volume than the
 // source (cross-volume restore is allowed).
 func (s *Service) Restore(ctx context.Context, volumes []VolumeInfo, volume VolumeInfo, snapshotName, relPath string, opts RestoreOptions) (RestoreResult, error) {
+	onConflict, err := opts.onConflict()
+	if err != nil {
+		return RestoreResult{}, err
+	}
+
 	snapDir, err := ResolveSnapshotPath(volume, snapshotName)
 	if err != nil {
 		return RestoreResult{}, err
@@ -257,8 +344,13 @@ func (s *Service) Restore(ctx context.Context, volumes []VolumeInfo, volume Volu
 		}
 	}
 
-	ts := s.clock().Now().UTC().Format(nameTimeLayout)
 	name := filepath.Base(relClean)
+
+	if onConflict == RestoreConflictOverwrite {
+		return s.restoreOverwrite(ctx, destParent, name, srcPath, srcInfo.IsDir)
+	}
+
+	ts := s.clock().Now().UTC().Format(nameTimeLayout)
 	destPath, err := computeRestoreDestination(s.Paths, destParent, name, ts, srcInfo.IsDir, opts.withMarker())
 	if err != nil {
 		return RestoreResult{}, err
@@ -269,4 +361,110 @@ func (s *Service) Restore(ctx context.Context, volumes []VolumeInfo, volume Volu
 	}
 
 	return RestoreResult{RestoredPath: destPath}, nil
+}
+
+// restoreOverwrite implements RestoreOptions.OnConflict ==
+// RestoreConflictOverwrite: destParent/name (the literal original
+// restore-destination name — no ".restored-<ts>" marker, no numbering) is
+// the only destination this ever considers.
+//
+//   - If nothing currently occupies that name, this is identical to
+//     keep_both's unnumbered first choice: srcPath is copied straight there.
+//   - If isDir (the SOURCE is a directory) and something already occupies
+//     that name (of ANY type), this refuses with
+//     ErrRestoreOverwriteUnsupported — overwriting a directory tree isn't
+//     something a single atomic filesystem operation can do safely (see
+//     below), and the caller should use keep_both instead.
+//   - If the source is a file and destParent/name already exists as a
+//     directory (Stat follows symlinks, so this also catches a symlink
+//     pointing at a directory), this refuses the same way.
+//   - Otherwise (the source is a file and the existing destParent/name is a
+//     regular file, a symlink to one, or a dangling symlink), this performs
+//     the actual safe replacement: srcPath is copied to a temporary file in
+//     destParent (never in-place at destParent/name itself, so a copy
+//     failure partway through can never leave a half-written file at the
+//     real destination), then that temporary file is renamed over
+//     destParent/name in one atomic filesystem operation. A failure at
+//     EITHER step cleans up the temporary file (best-effort — a cleanup
+//     failure is logged into the returned error's context, not swallowed,
+//     but doesn't change the outcome) and returns an error; the real
+//     destination is left byte-for-byte as it was before this call in every
+//     failure case, because it is never touched directly, only ever replaced
+//     by the one atomic rename.
+//
+// Restricting this to non-directories is a deliberate, permanent scope
+// limit, not a "not implemented yet": os.Rename atomically replacing a
+// single directory entry generalizes cleanly to "swap one file for
+// another" but not to "swap one directory tree for another" — a
+// multi-file directory copy has no equivalent single atomic step, so a
+// failure partway through copying a large directory could leave the
+// destination in a mixed old/new state no matter how it's sequenced. A
+// caller wanting to replace a directory should use keep_both (numbered
+// alongside) and clean up the old one separately.
+func (s *Service) restoreOverwrite(ctx context.Context, destParent, name, srcPath string, isDir bool) (RestoreResult, error) {
+	destPath := filepath.Join(destParent, name)
+
+	targetExists, err := s.Paths.Exists(destPath)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("check overwrite destination %s: %w", destPath, err)
+	}
+	if !targetExists {
+		if err := s.Copier.Copy(ctx, srcPath, destPath); err != nil {
+			return RestoreResult{}, fmt.Errorf("copy restore source to destination: %w", err)
+		}
+		return RestoreResult{RestoredPath: destPath}, nil
+	}
+
+	if isDir {
+		return RestoreResult{}, fmt.Errorf("%w: source %q is a directory and destination %q already exists", ErrRestoreOverwriteUnsupported, name, destPath)
+	}
+
+	targetInfo, statOk, err := s.Paths.Stat(destPath)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("stat overwrite destination %s: %w", destPath, err)
+	}
+	if statOk && targetInfo.IsDir {
+		return RestoreResult{}, fmt.Errorf("%w: destination %q is a directory", ErrRestoreOverwriteUnsupported, destPath)
+	}
+
+	// destPath exists (Exists, above, is Lstat-based: it's true for a
+	// regular file, a symlink to one, OR a dangling symlink) but does not
+	// resolve to a directory (Stat, above, follows symlinks) — safe to
+	// atomically replace.
+	tempPath, err := s.overwriteTempPath(destParent, name)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+
+	if err := s.Copier.Copy(ctx, srcPath, tempPath); err != nil {
+		if remErr := s.Paths.Remove(tempPath); remErr != nil {
+			return RestoreResult{}, fmt.Errorf("copy restore source to temporary file %s: %w (cleanup also failed: %v)", tempPath, err, remErr)
+		}
+		return RestoreResult{}, fmt.Errorf("copy restore source to temporary file %s: %w", tempPath, err)
+	}
+
+	if err := s.Paths.Rename(tempPath, destPath); err != nil {
+		if remErr := s.Paths.Remove(tempPath); remErr != nil {
+			return RestoreResult{}, fmt.Errorf("rename temporary restore file %s into place at %s (original destination left untouched): %w (cleanup also failed: %v)", tempPath, destPath, err, remErr)
+		}
+		return RestoreResult{}, fmt.Errorf("rename temporary restore file %s into place at %s (original destination left untouched): %w", tempPath, destPath, err)
+	}
+
+	return RestoreResult{RestoredPath: destPath}, nil
+}
+
+// overwriteTempPath picks an unused "<name>.nimoos-restoring-<suffix>" path
+// inside destParent for restoreOverwrite's copy-then-rename sequence.
+func (s *Service) overwriteTempPath(destParent, name string) (string, error) {
+	for i := 0; i < maxOverwriteTempAttempts; i++ {
+		candidate := filepath.Join(destParent, name+restoreTempInfix+s.tempSuffix())
+		exists, err := s.Paths.Exists(candidate)
+		if err != nil {
+			return "", fmt.Errorf("check temporary restore path %s: %w", candidate, err)
+		}
+		if !exists {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("could not find an unused temporary restore path for %s after %d attempts", name, maxOverwriteTempAttempts)
 }

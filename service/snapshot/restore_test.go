@@ -967,3 +967,398 @@ func TestRestoreDestDirCrossVolumeFallsBackOnReflinkFailure(t *testing.T) {
 		t.Fatalf("expected 1 fallback (non-reflink) call, got %+v", f.copier.Calls)
 	}
 }
+
+// --- RestoreOptions.onConflict (pure validation) ---
+
+func TestOnConflictDefaultsToKeepBoth(t *testing.T) {
+	got, err := (RestoreOptions{}).onConflict()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != RestoreConflictKeepBoth {
+		t.Errorf("got %q, want %q", got, RestoreConflictKeepBoth)
+	}
+}
+
+func TestOnConflictAcceptsExplicitKeepBoth(t *testing.T) {
+	got, err := (RestoreOptions{OnConflict: "keep_both"}).onConflict()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != RestoreConflictKeepBoth {
+		t.Errorf("got %q, want %q", got, RestoreConflictKeepBoth)
+	}
+}
+
+func TestOnConflictAcceptsOverwrite(t *testing.T) {
+	got, err := (RestoreOptions{OnConflict: "overwrite"}).onConflict()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != RestoreConflictOverwrite {
+		t.Errorf("got %q, want %q", got, RestoreConflictOverwrite)
+	}
+}
+
+func TestOnConflictRejectsUnknownValue(t *testing.T) {
+	_, err := (RestoreOptions{OnConflict: "delete_existing"}).onConflict()
+	if !errors.Is(err, ErrInvalidRestoreOnConflict) {
+		t.Fatalf("expected ErrInvalidRestoreOnConflict, got %v", err)
+	}
+}
+
+// --- Service.restoreOverwrite (pure orchestration, FakePathChecker/FakeCopier) ---
+//
+// These call restoreOverwrite directly (bypassing Restore's snapshot/path
+// resolution entirely, the same way computeRestoreDestination's own tests
+// call it directly) so destParent/name/srcPath can be arbitrary strings —
+// FakePathChecker and FakeCopier never touch a real filesystem, so nothing
+// here needs to actually exist on disk.
+
+// newOverwriteTestService returns a Service wired for restoreOverwrite's pure
+// unit tests: a FakePathChecker/FakeCopier pair, and a fixed TempSuffix so
+// the exact temporary path restoreOverwrite will use is predictable (needed
+// to key FakeCopier's ReflinkErr/FallbackErr, or FakePathChecker's
+// RenameErr, by their exact expected argument).
+func newOverwriteTestService(suffix string) (*Service, *FakePathChecker, *FakeCopier) {
+	paths := NewFakePathChecker()
+	copier := NewFakeCopier()
+	svc := &Service{
+		Paths:      paths,
+		Copier:     copier,
+		TempSuffix: func() string { return suffix },
+	}
+	return svc, paths, copier
+}
+
+func TestRestoreOverwriteCopiesDirectlyWhenNoExistingTarget(t *testing.T) {
+	svc, _, copier := newOverwriteTestService("suffix1")
+
+	result, err := svc.restoreOverwrite(context.Background(), "/live", "report.docx", "/snap/report.docx", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/report.docx"
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	if len(copier.Calls) != 1 || copier.Calls[0].Src != "/snap/report.docx" || copier.Calls[0].Dest != want {
+		t.Fatalf("expected 1 direct copy call to %q, got %+v", want, copier.Calls)
+	}
+}
+
+// TestRestoreOverwriteAllowsDirectorySourceWhenNoTarget proves the
+// directory-source restriction only kicks in when there's actually
+// something at the destination to replace: a directory source restoring
+// into a name nothing currently occupies is just a plain copy, identical to
+// keep_both's unnumbered first choice.
+func TestRestoreOverwriteAllowsDirectorySourceWhenNoTarget(t *testing.T) {
+	svc, _, copier := newOverwriteTestService("suffix1")
+
+	result, err := svc.restoreOverwrite(context.Background(), "/live", "Projects", "/snap/Projects", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/Projects"
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	if len(copier.Calls) != 1 || copier.Calls[0].Dest != want {
+		t.Fatalf("expected 1 direct copy call to %q, got %+v", want, copier.Calls)
+	}
+}
+
+// TestRestoreOverwriteReplacesExistingFileAtomically proves the
+// copy-to-temp-then-rename sequence: Copy is called with the TEMPORARY path
+// (never destPath directly), and only after that succeeds is Rename called
+// from the temporary path onto destPath.
+func TestRestoreOverwriteReplacesExistingFileAtomically(t *testing.T) {
+	svc, paths, copier := newOverwriteTestService("suffix1")
+	paths.Seed("/live/report.docx", PathInfo{IsDir: false})
+
+	result, err := svc.restoreOverwrite(context.Background(), "/live", "report.docx", "/snap/report.docx", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/report.docx"
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	wantTemp := "/live/report.docx.nimoos-restoring-suffix1"
+	if len(copier.Calls) != 1 || copier.Calls[0].Src != "/snap/report.docx" || copier.Calls[0].Dest != wantTemp {
+		t.Fatalf("expected 1 copy call to temp path %q, got %+v", wantTemp, copier.Calls)
+	}
+	wantRename := wantTemp + " -> " + want
+	if len(paths.RenameCalls) != 1 || paths.RenameCalls[0] != wantRename {
+		t.Fatalf("expected 1 rename call %q, got %+v", wantRename, paths.RenameCalls)
+	}
+	if len(paths.RemoveCalls) != 0 {
+		t.Fatalf("expected no cleanup Remove call on the success path, got %+v", paths.RemoveCalls)
+	}
+}
+
+// TestRestoreOverwriteTempPathAvoidsCollision proves overwriteTempPath
+// actually retries when its first candidate collides, rather than trusting
+// TempSuffix blindly.
+func TestRestoreOverwriteTempPathAvoidsCollision(t *testing.T) {
+	svc, paths, copier := newOverwriteTestService("")
+	paths.Seed("/live/report.docx", PathInfo{IsDir: false})
+	paths.Seed("/live/report.docx.nimoos-restoring-a", PathInfo{})
+	suffixes := []string{"a", "b"}
+	call := 0
+	svc.TempSuffix = func() string {
+		s := suffixes[call]
+		call++
+		return s
+	}
+
+	result, err := svc.restoreOverwrite(context.Background(), "/live", "report.docx", "/snap/report.docx", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RestoredPath != "/live/report.docx" {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, "/live/report.docx")
+	}
+	wantTemp := "/live/report.docx.nimoos-restoring-b"
+	if len(copier.Calls) != 1 || copier.Calls[0].Dest != wantTemp {
+		t.Fatalf("expected the copy to skip the colliding suffix and use %q, got %+v", wantTemp, copier.Calls)
+	}
+}
+
+// TestRestoreOverwriteCopyFailureCleansUpAndReturnsError proves a failure
+// copying the source to the temporary file returns an error and attempts to
+// remove whatever (if anything) was left at the temporary path — and never
+// even attempts a Rename, since there's nothing valid to rename.
+func TestRestoreOverwriteCopyFailureCleansUpAndReturnsError(t *testing.T) {
+	svc, paths, copier := newOverwriteTestService("suffix1")
+	paths.Seed("/live/report.docx", PathInfo{IsDir: false})
+	tempPath := "/live/report.docx.nimoos-restoring-suffix1"
+	copier.ReflinkErr[tempPath] = errors.New("simulated reflink failure")
+	copier.FallbackErr[tempPath] = errors.New("simulated fallback failure too")
+
+	_, err := svc.restoreOverwrite(context.Background(), "/live", "report.docx", "/snap/report.docx", false)
+	if err == nil {
+		t.Fatal("expected an error when the temp copy fails")
+	}
+	if len(paths.RemoveCalls) != 1 || paths.RemoveCalls[0] != tempPath {
+		t.Fatalf("expected a cleanup Remove call for %q, got %+v", tempPath, paths.RemoveCalls)
+	}
+	if len(paths.RenameCalls) != 0 {
+		t.Fatalf("expected no Rename attempt after a failed temp copy, got %+v", paths.RenameCalls)
+	}
+	// The original destination's fake metadata must be untouched.
+	info, ok, statErr := paths.Stat("/live/report.docx")
+	if statErr != nil || !ok || info.IsDir {
+		t.Fatalf("expected original destination to remain a plain existing file, got info=%+v ok=%v err=%v", info, ok, statErr)
+	}
+}
+
+// TestRestoreOverwriteRenameFailureCleansUpAndReturnsError proves a failure
+// in the rename-into-place step (after a successful temp copy) still cleans
+// up the temporary file, returns an error, and leaves the real destination's
+// (fake) metadata exactly as it was.
+func TestRestoreOverwriteRenameFailureCleansUpAndReturnsError(t *testing.T) {
+	svc, paths, _ := newOverwriteTestService("suffix1")
+	paths.Seed("/live/report.docx", PathInfo{IsDir: false, Size: 999})
+	tempPath := "/live/report.docx.nimoos-restoring-suffix1"
+	paths.RenameErr[tempPath] = errors.New("simulated rename failure")
+
+	_, err := svc.restoreOverwrite(context.Background(), "/live", "report.docx", "/snap/report.docx", false)
+	if err == nil {
+		t.Fatal("expected an error when the rename fails")
+	}
+	if len(paths.RemoveCalls) != 1 || paths.RemoveCalls[0] != tempPath {
+		t.Fatalf("expected a cleanup Remove call for %q, got %+v", tempPath, paths.RemoveCalls)
+	}
+	info, ok, statErr := paths.Stat("/live/report.docx")
+	if statErr != nil || !ok || info.IsDir || info.Size != 999 {
+		t.Fatalf("expected original destination metadata untouched, got info=%+v ok=%v err=%v", info, ok, statErr)
+	}
+}
+
+// TestRestoreOverwriteRejectsDirectoryTarget proves an existing destination
+// that resolves (via Stat, which follows symlinks) to a directory is
+// rejected outright — the Copier is never even invoked.
+func TestRestoreOverwriteRejectsDirectoryTarget(t *testing.T) {
+	svc, paths, copier := newOverwriteTestService("suffix1")
+	paths.Seed("/live/Projects", PathInfo{IsDir: true})
+
+	_, err := svc.restoreOverwrite(context.Background(), "/live", "Projects", "/snap/Projects", false)
+	if !errors.Is(err, ErrRestoreOverwriteUnsupported) {
+		t.Fatalf("expected ErrRestoreOverwriteUnsupported, got %v", err)
+	}
+	if len(copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", copier.Calls)
+	}
+}
+
+// TestRestoreOverwriteRejectsDirectorySourceWhenTargetExists proves a
+// directory SOURCE is rejected whenever the destination name is already
+// occupied, regardless of what type the existing target is.
+func TestRestoreOverwriteRejectsDirectorySourceWhenTargetExists(t *testing.T) {
+	svc, paths, copier := newOverwriteTestService("suffix1")
+	paths.Seed("/live/Projects", PathInfo{IsDir: false})
+
+	_, err := svc.restoreOverwrite(context.Background(), "/live", "Projects", "/snap/Projects", true)
+	if !errors.Is(err, ErrRestoreOverwriteUnsupported) {
+		t.Fatalf("expected ErrRestoreOverwriteUnsupported, got %v", err)
+	}
+	if len(copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", copier.Calls)
+	}
+}
+
+// --- Service.Restore: on_conflict=overwrite (real temp-dir filesystem) ---
+
+// TestRestoreOnConflictOverwriteReplacesExistingFileContent is the
+// end-to-end proof that overwrite actually replaces the live file's bytes
+// with the snapshot's: FakeCopier.RealCopyFiles is turned on so the
+// temp-copy-then-rename sequence runs against real files in a real temp
+// directory (matching this fixture's OSPathChecker), exercising the real
+// os.Rename this feature's atomicity guarantee depends on, not just a
+// recorded call.
+func TestRestoreOnConflictOverwriteReplacesExistingFileContent(t *testing.T) {
+	f := newRestoreFixture(t)
+	f.copier.RealCopyFiles = true
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("snapshot content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	liveFile := filepath.Join(f.volume.MountPoint, "report.docx")
+	if err := os.WriteFile(liveFile, []byte("stale live content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{OnConflict: RestoreConflictOverwrite})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RestoredPath != liveFile {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, liveFile)
+	}
+	got, err := os.ReadFile(liveFile)
+	if err != nil {
+		t.Fatalf("read restored file: %v", err)
+	}
+	if string(got) != "snapshot content" {
+		t.Errorf("got restored content %q, want %q", got, "snapshot content")
+	}
+	leftover, err := filepath.Glob(filepath.Join(f.volume.MountPoint, "*"+restoreTempInfix+"*"))
+	if err != nil {
+		t.Fatalf("glob for leftover temp files: %v", err)
+	}
+	if len(leftover) != 0 {
+		t.Fatalf("expected no leftover temporary restore files, got %+v", leftover)
+	}
+}
+
+// TestRestoreOnConflictOverwriteNoTargetFallsBackToPlainCopy proves overwrite
+// composes fine with the common case a browser's pre-restore check would
+// actually hit most of the time: nothing occupies the original name at all
+// (that's the whole reason a restore is needed), so this is just a direct
+// copy under the original name — same destination as with_marker=false, but
+// reached via the on_conflict field instead.
+func TestRestoreOnConflictOverwriteNoTargetFallsBackToPlainCopy(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{OnConflict: RestoreConflictOverwrite})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(f.volume.MountPoint, "report.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	if len(f.copier.Calls) != 1 || f.copier.Calls[0].Dest != want {
+		t.Fatalf("expected 1 direct copy call to %q, got %+v", want, f.copier.Calls)
+	}
+}
+
+// TestRestoreOnConflictOverwriteRejectsDirectorySource proves the Service.Restore
+// entry point surfaces ErrRestoreOverwriteUnsupported (mapped to 400 by
+// route/snapshot.go) when the snapshot source is a directory and something
+// already occupies its original-name destination in the live volume.
+func TestRestoreOnConflictOverwriteRejectsDirectorySource(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.MkdirAll(filepath.Join(f.snapDir, "Projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.volume.MountPoint, "Projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "Projects",
+		RestoreOptions{OnConflict: RestoreConflictOverwrite})
+	if !errors.Is(err, ErrRestoreOverwriteUnsupported) {
+		t.Fatalf("expected ErrRestoreOverwriteUnsupported, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreOnConflictOverwriteRejectsDirectoryTarget proves the reverse
+// shape: a FILE source whose original-name destination is already occupied
+// by a directory is also rejected.
+func TestRestoreOnConflictOverwriteRejectsDirectoryTarget(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.volume.MountPoint, "report.docx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{OnConflict: RestoreConflictOverwrite})
+	if !errors.Is(err, ErrRestoreOverwriteUnsupported) {
+		t.Fatalf("expected ErrRestoreOverwriteUnsupported, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreRejectsInvalidOnConflictValue proves an unrecognized on_conflict
+// value fails fast (before even resolving the snapshot) with
+// ErrInvalidRestoreOnConflict.
+func TestRestoreRejectsInvalidOnConflictValue(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{OnConflict: "replace_please"})
+	if !errors.Is(err, ErrInvalidRestoreOnConflict) {
+		t.Fatalf("expected ErrInvalidRestoreOnConflict, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreOnConflictKeepBothExplicitMatchesDefault proves passing
+// on_conflict="keep_both" explicitly reproduces exactly the same behavior as
+// omitting it (RestoreOptions{}) — the pre-existing default must not have
+// changed.
+func TestRestoreOnConflictKeepBothExplicitMatchesDefault(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{OnConflict: RestoreConflictKeepBoth})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(f.volume.MountPoint, "report.restored-20260713T120000Z.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+}

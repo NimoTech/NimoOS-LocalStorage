@@ -38,6 +38,21 @@ type PathChecker interface {
 	// volume — the exact "the whole folder is gone" incident this feature
 	// exists for — can still succeed.
 	MkdirAll(dir string) error
+	// Rename atomically replaces newPath with oldPath (moving oldPath to
+	// newPath in a single filesystem operation). Restore's
+	// on_conflict=overwrite path (restore.go's restoreOverwrite) is this
+	// method's only caller: it copies the restore source to a temporary
+	// file alongside the real destination, then Renames the temporary file
+	// into place, so the real destination is only ever replaced by one
+	// atomic rename — never by an in-place overwrite that could leave a
+	// half-written file if it failed partway through.
+	Rename(oldPath, newPath string) error
+	// Remove deletes path if it exists (a no-op, not an error, if it
+	// doesn't). Restore's on_conflict=overwrite path uses this to clean up
+	// its temporary file if the copy-to-temp or the rename-into-place step
+	// fails, so a failed overwrite never leaves stray
+	// "<name>.nimoos-restoring-*" files behind.
+	Remove(path string) error
 }
 
 // OSPathChecker is the production PathChecker, backed by the real
@@ -69,4 +84,15 @@ func (OSPathChecker) Stat(path string) (PathInfo, bool, error) {
 
 func (OSPathChecker) MkdirAll(dir string) error {
 	return os.MkdirAll(dir, 0o755)
+}
+
+func (OSPathChecker) Rename(oldPath, newPath string) error {
+	return os.Rename(oldPath, newPath)
+}
+
+func (OSPathChecker) Remove(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
