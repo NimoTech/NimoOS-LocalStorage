@@ -24,7 +24,7 @@ import (
 
 func TestComputeRestoreDestinationPicksPlainNameWhenNoCollision(t *testing.T) {
 	paths := NewFakePathChecker()
-	got, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false)
+	got, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestComputeRestoreDestinationAppendsSuffixOnSingleCollision(t *testing.T) {
 	paths := NewFakePathChecker()
 	paths.Seed("/live/file.restored-20260713T000000Z.txt", PathInfo{})
 
-	got, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false)
+	got, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestComputeRestoreDestinationSkipsMultipleCollisions(t *testing.T) {
 	paths.Seed("/live/file.restored-20260713T000000Z-2.txt", PathInfo{})
 	paths.Seed("/live/file.restored-20260713T000000Z-3.txt", PathInfo{})
 
-	got, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false)
+	got, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,14 +68,14 @@ func TestComputeRestoreDestinationPropagatesExistsError(t *testing.T) {
 	paths := NewFakePathChecker()
 	paths.ExistsErr["/live/file.restored-20260713T000000Z.txt"] = errors.New("boom")
 
-	if _, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false); err == nil {
+	if _, err := computeRestoreDestination(paths, "/live", "file.txt", "20260713T000000Z", false, true); err == nil {
 		t.Fatal("expected error to propagate")
 	}
 }
 
 func TestComputeRestoreDestinationDirectoryKeepsAppendBehavior(t *testing.T) {
 	paths := NewFakePathChecker()
-	got, err := computeRestoreDestination(paths, "/live", "Projects", "20260713T000000Z", true)
+	got, err := computeRestoreDestination(paths, "/live", "Projects", "20260713T000000Z", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestComputeRestoreDestinationDirectoryKeepsAppendBehavior(t *testing.T) {
 // extension" — isDir must win over the name shape.
 func TestComputeRestoreDestinationDirectoryWithDotInNameIsNotSplit(t *testing.T) {
 	paths := NewFakePathChecker()
-	got, err := computeRestoreDestination(paths, "/live", "archive.tar", "20260713T000000Z", true)
+	got, err := computeRestoreDestination(paths, "/live", "archive.tar", "20260713T000000Z", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestComputeRestoreDestinationDirectoryWithDotInNameIsNotSplit(t *testing.T)
 
 func TestComputeRestoreDestinationDotfileKeepsAppendBehavior(t *testing.T) {
 	paths := NewFakePathChecker()
-	got, err := computeRestoreDestination(paths, "/live", ".bashrc", "20260713T000000Z", false)
+	got, err := computeRestoreDestination(paths, "/live", ".bashrc", "20260713T000000Z", false, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestComputeRestoreDestinationDotfileKeepsAppendBehavior(t *testing.T) {
 
 func TestComputeRestoreDestinationExtensionlessKeepsAppendBehavior(t *testing.T) {
 	paths := NewFakePathChecker()
-	got, err := computeRestoreDestination(paths, "/live", "README", "20260713T000000Z", false)
+	got, err := computeRestoreDestination(paths, "/live", "README", "20260713T000000Z", false, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestComputeRestoreDestinationExtensionlessKeepsAppendBehavior(t *testing.T)
 // not just ASCII names.
 func TestComputeRestoreDestinationNonASCIIStemKeepsExtension(t *testing.T) {
 	paths := NewFakePathChecker()
-	got, err := computeRestoreDestination(paths, "/live", "设计图.psd", "20260713T000000Z", false)
+	got, err := computeRestoreDestination(paths, "/live", "设计图.psd", "20260713T000000Z", false, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,11 +145,106 @@ func TestComputeRestoreDestinationNonASCIIStemKeepsExtension(t *testing.T) {
 // final segment after the LAST dot is treated as "the extension".
 func TestComputeRestoreDestinationMultiPartExtensionSplitsOnLastDotOnly(t *testing.T) {
 	paths := NewFakePathChecker()
-	got, err := computeRestoreDestination(paths, "/live", "archive.tar.gz", "20260713T000000Z", false)
+	got, err := computeRestoreDestination(paths, "/live", "archive.tar.gz", "20260713T000000Z", false, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := "/live/archive.tar.restored-20260713T000000Z.gz"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// --- computeRestoreDestination, withMarker=false (naming matrix) ---
+//
+//	input                    isDir   destination (no collision)   destination (1st collision)
+//	report.docx (file)       false   report.docx                  report-2.docx
+//	Projects (dir)           true    Projects                     Projects-2
+//	.bashrc (dotfile)        false   .bashrc                       .bashrc-2
+//	archive.tar.gz (file)    false   archive.tar.gz                archive.tar-2.gz
+
+func TestComputeRestoreDestinationWithoutMarkerPicksOriginalNameWhenNoCollision(t *testing.T) {
+	paths := NewFakePathChecker()
+	got, err := computeRestoreDestination(paths, "/live", "report.docx", "20260713T000000Z", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/report.docx"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestComputeRestoreDestinationWithoutMarkerNumbersFileOnCollisionBeforeExtension(t *testing.T) {
+	paths := NewFakePathChecker()
+	paths.Seed("/live/report.docx", PathInfo{})
+
+	got, err := computeRestoreDestination(paths, "/live", "report.docx", "20260713T000000Z", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/report-2.docx"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestComputeRestoreDestinationWithoutMarkerSkipsMultipleCollisions(t *testing.T) {
+	paths := NewFakePathChecker()
+	paths.Seed("/live/report.docx", PathInfo{})
+	paths.Seed("/live/report-2.docx", PathInfo{})
+	paths.Seed("/live/report-3.docx", PathInfo{})
+
+	got, err := computeRestoreDestination(paths, "/live", "report.docx", "20260713T000000Z", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/report-4.docx"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestComputeRestoreDestinationWithoutMarkerDirectoryNumbersOnCollision(t *testing.T) {
+	paths := NewFakePathChecker()
+	paths.Seed("/live/Projects", PathInfo{})
+
+	got, err := computeRestoreDestination(paths, "/live", "Projects", "20260713T000000Z", true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/Projects-2"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestComputeRestoreDestinationWithoutMarkerDotfileNumbersOnCollision(t *testing.T) {
+	paths := NewFakePathChecker()
+	paths.Seed("/live/.bashrc", PathInfo{})
+
+	got, err := computeRestoreDestination(paths, "/live", ".bashrc", "20260713T000000Z", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/.bashrc-2"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestComputeRestoreDestinationWithoutMarkerKeepsCompoundExtensionOnCollision
+// proves the extension-preservation rule (splitRestoreExt) applies to the
+// bare numeric suffix too, not just the ".restored-<ts>" marker.
+func TestComputeRestoreDestinationWithoutMarkerKeepsCompoundExtensionOnCollision(t *testing.T) {
+	paths := NewFakePathChecker()
+	paths.Seed("/live/archive.tar.gz", PathInfo{})
+
+	got, err := computeRestoreDestination(paths, "/live", "archive.tar.gz", "20260713T000000Z", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/live/archive.tar-2.gz"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -209,7 +304,7 @@ func TestRestoreCopiesFileFromSnapshotToLiveVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "report.docx")
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,7 +338,7 @@ func TestRestoreDirectoryKeepsAppendNaming(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "Projects")
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "Projects", RestoreOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -262,7 +357,7 @@ func TestRestoreDotfileKeepsAppendNaming(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := f.svc.Restore(context.Background(), f.volume, f.snapName, ".bashrc")
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, ".bashrc", RestoreOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,7 +380,7 @@ func TestRestoreCreatesMissingParentDirectoriesInLiveVolume(t *testing.T) {
 	// models the actual incident this feature exists for (source AND
 	// destination directories both gone).
 
-	result, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "Projects/2026/design.psd")
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "Projects/2026/design.psd", RestoreOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -315,7 +410,7 @@ func TestRestoreNeverOverwritesExistingDestinationAndNumbers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "report.docx")
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -337,7 +432,7 @@ func TestRestoreNeverOverwritesExistingDestinationAndNumbers(t *testing.T) {
 
 func TestRestoreRejectsAbsolutePath(t *testing.T) {
 	f := newRestoreFixture(t)
-	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "/etc/passwd")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "/etc/passwd", RestoreOptions{})
 	if !errors.Is(err, ErrInvalidRestorePath) {
 		t.Fatalf("expected ErrInvalidRestorePath, got %v", err)
 	}
@@ -348,7 +443,7 @@ func TestRestoreRejectsAbsolutePath(t *testing.T) {
 
 func TestRestoreRejectsDotDotTraversal(t *testing.T) {
 	f := newRestoreFixture(t)
-	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "../../../etc/passwd")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "../../../etc/passwd", RestoreOptions{})
 	if !errors.Is(err, ErrInvalidRestorePath) {
 		t.Fatalf("expected ErrInvalidRestorePath, got %v", err)
 	}
@@ -370,7 +465,7 @@ func TestRestoreRejectsSymlinkEscapeInSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "escape/secret.txt")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "escape/secret.txt", RestoreOptions{})
 	if !errors.Is(err, ErrInvalidRestorePath) {
 		t.Fatalf("expected ErrInvalidRestorePath for symlink escape, got %v", err)
 	}
@@ -403,7 +498,7 @@ func TestRestoreRejectsSymlinkEscapeInLiveVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "nested/secret.txt")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "nested/secret.txt", RestoreOptions{})
 	if !errors.Is(err, ErrInvalidRestorePath) {
 		t.Fatalf("expected ErrInvalidRestorePath for a live-volume symlink escape, got %v", err)
 	}
@@ -418,7 +513,7 @@ func TestRestoreRejectsSymlinkEscapeInLiveVolume(t *testing.T) {
 // the whole snapshot into a folder inside its own live volume root.
 func TestRestoreRejectsPathDot(t *testing.T) {
 	f := newRestoreFixture(t)
-	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, ".")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, ".", RestoreOptions{})
 	if !errors.Is(err, ErrInvalidRestorePath) {
 		t.Fatalf("expected ErrInvalidRestorePath for path \".\", got %v", err)
 	}
@@ -431,7 +526,7 @@ func TestRestoreSourceNotFoundInsideSnapshot(t *testing.T) {
 	f := newRestoreFixture(t)
 	// snapDir exists (it's a real directory) but "missing.txt" was never
 	// written into it.
-	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "missing.txt")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "missing.txt", RestoreOptions{})
 	if !errors.Is(err, ErrRestoreSourceNotFound) {
 		t.Fatalf("expected ErrRestoreSourceNotFound, got %v", err)
 	}
@@ -442,7 +537,7 @@ func TestRestoreSourceNotFoundInsideSnapshot(t *testing.T) {
 
 func TestRestoreUnknownSnapshotNameIsRejected(t *testing.T) {
 	f := newRestoreFixture(t)
-	_, err := f.svc.Restore(context.Background(), f.volume, "not-one-of-ours", "report.docx")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, "not-one-of-ours", "report.docx", RestoreOptions{})
 	if !errors.Is(err, ErrInvalidSnapshotName) {
 		t.Fatalf("expected ErrInvalidSnapshotName, got %v", err)
 	}
@@ -451,7 +546,7 @@ func TestRestoreUnknownSnapshotNameIsRejected(t *testing.T) {
 func TestRestoreSnapshotNotOnDiskIsRejected(t *testing.T) {
 	f := newRestoreFixture(t)
 	// A syntactically valid name that this fixture never seeded on disk.
-	_, err := f.svc.Restore(context.Background(), f.volume, "20260101T000000Z_manual_ghost", "report.docx")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, "20260101T000000Z_manual_ghost", "report.docx", RestoreOptions{})
 	if !errors.Is(err, ErrSnapshotNotFound) {
 		t.Fatalf("expected ErrSnapshotNotFound, got %v", err)
 	}
@@ -473,7 +568,7 @@ func TestRestoreFallsBackWhenReflinkFails(t *testing.T) {
 	dest := filepath.Join(f.volume.MountPoint, "report.restored-20260713T120000Z.docx")
 	f.copier.ReflinkErr[dest] = errors.New("simulated: operation not supported")
 
-	result, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "report.docx")
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -501,7 +596,7 @@ func TestRestorePropagatesDestinationExistsErrorFromCopier(t *testing.T) {
 	f.copier.ReflinkErr[dest] = ErrRestoreDestinationExists
 	f.copier.FallbackErr[dest] = ErrRestoreDestinationExists
 
-	_, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "report.docx")
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{})
 	if !errors.Is(err, ErrRestoreDestinationExists) {
 		t.Fatalf("expected ErrRestoreDestinationExists, got %v", err)
 	}
@@ -516,7 +611,359 @@ func TestRestorePropagatesCopyFailureWhenBothAttemptsFail(t *testing.T) {
 	f.copier.ReflinkErr[dest] = errors.New("simulated reflink failure")
 	f.copier.FallbackErr[dest] = errors.New("simulated fallback failure too")
 
-	if _, err := f.svc.Restore(context.Background(), f.volume, f.snapName, "report.docx"); err == nil {
+	if _, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{}); err == nil {
 		t.Fatal("expected an error when both copy attempts fail")
+	}
+}
+
+// --- Service.Restore: with_marker=false ---
+
+func boolPtr(b bool) *bool { return &b }
+
+// TestRestoreWithMarkerFalseUsesOriginalName proves with_marker=false lands
+// the restore back at exactly relPath's original path (no ".restored-<ts>"
+// anywhere) when nothing already occupies it — the common case, since the
+// live file/directory being restored was itself removed from that same
+// location (that's the whole reason a restore is needed).
+func TestRestoreWithMarkerFalseUsesOriginalName(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{WithMarker: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(f.volume.MountPoint, "report.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	if f.copier.Calls[0].Dest != want {
+		t.Errorf("got copy dest %q, want %q", f.copier.Calls[0].Dest, want)
+	}
+}
+
+// TestRestoreWithMarkerFalseNumbersOnCollisionKeepingExtension proves the
+// never-overwrite guarantee still holds with with_marker=false: a
+// pre-existing "report.docx" at the original location forces a bare "-2"
+// suffix inserted before the extension, not a silent overwrite.
+func TestRestoreWithMarkerFalseNumbersOnCollisionKeepingExtension(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preExisting := filepath.Join(f.volume.MountPoint, "report.docx")
+	if err := os.WriteFile(preExisting, []byte("pre-existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{WithMarker: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(f.volume.MountPoint, "report-2.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	content, err := os.ReadFile(preExisting)
+	if err != nil {
+		t.Fatalf("pre-existing file missing: %v", err)
+	}
+	if string(content) != "pre-existing" {
+		t.Errorf("pre-existing file was overwritten: %q", content)
+	}
+}
+
+// TestRestoreWithMarkerFalseDirectoryNumbersOnCollision mirrors the file
+// case above for a directory, proving the append-style (not
+// before-the-extension) placement still applies with the marker off.
+func TestRestoreWithMarkerFalseDirectoryNumbersOnCollision(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.MkdirAll(filepath.Join(f.snapDir, "Projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.volume.MountPoint, "Projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "Projects", RestoreOptions{WithMarker: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(f.volume.MountPoint, "Projects-2")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+}
+
+// --- Service.Restore: dest_dir ---
+
+func TestRestoreDestDirOverridesDefaultLocation(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destDir := filepath.Join(f.volume.MountPoint, "chosen-destination")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx", RestoreOptions{DestDir: destDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(destDir, "report.restored-20260713T120000Z.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+}
+
+// TestRestoreDestDirCombinedWithMarkerFalse proves dest_dir and with_marker
+// compose: the file lands under the chosen directory, AND under its
+// original (unmarked) name.
+func TestRestoreDestDirCombinedWithMarkerFalse(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destDir := filepath.Join(f.volume.MountPoint, "chosen-destination")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: destDir, WithMarker: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(destDir, "report.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+}
+
+// TestRestoreDestDirCombinedWithMarkerFalseNumbersOnCollision proves the
+// never-overwrite guarantee holds in a caller-chosen dest_dir too.
+func TestRestoreDestDirCombinedWithMarkerFalseNumbersOnCollision(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destDir := filepath.Join(f.volume.MountPoint, "chosen-destination")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	preExisting := filepath.Join(destDir, "report.docx")
+	if err := os.WriteFile(preExisting, []byte("pre-existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: destDir, WithMarker: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(destDir, "report-2.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	content, err := os.ReadFile(preExisting)
+	if err != nil {
+		t.Fatalf("pre-existing file missing: %v", err)
+	}
+	if string(content) != "pre-existing" {
+		t.Errorf("pre-existing file was overwritten: %q", content)
+	}
+}
+
+func TestRestoreDestDirRejectsRelativePath(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: "relative/chosen-destination"})
+	if !errors.Is(err, ErrInvalidRestoreDestDir) {
+		t.Fatalf("expected ErrInvalidRestoreDestDir, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreDestDirRejectsPathNotUnderAnyVolume proves a dest_dir outside
+// every known volume's mount point (e.g. some other real directory on the
+// host) is rejected, even though it's an absolute, existing directory.
+func TestRestoreDestDirRejectsPathNotUnderAnyVolume(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: outside})
+	if !errors.Is(err, ErrInvalidRestoreDestDir) {
+		t.Fatalf("expected ErrInvalidRestoreDestDir, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreDestDirRejectsNonexistentDirectory proves dest_dir is never
+// auto-created: a syntactically valid path under a known volume, that
+// simply doesn't exist yet, is rejected with a clear error rather than
+// silently mkdir-ing it.
+func TestRestoreDestDirRejectsNonexistentDirectory(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(f.volume.MountPoint, "does-not-exist-yet")
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: missing})
+	if !errors.Is(err, ErrInvalidRestoreDestDir) {
+		t.Fatalf("expected ErrInvalidRestoreDestDir, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Fatalf("expected dest_dir to remain uncreated, got stat error %v", statErr)
+	}
+}
+
+// TestRestoreDestDirRejectsSymlinkEscape proves dest_dir's own symlink
+// defense (resolveRestoreDestDir's use of resolveExistingPrefix) is actually
+// reached: a dest_dir that resolves, via a symlink, to somewhere outside its
+// claimed volume's real mount point is rejected.
+func TestRestoreDestDirRejectsSymlinkEscape(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	escapeLink := filepath.Join(f.volume.MountPoint, "escape-dir")
+	if err := os.Symlink(outside, escapeLink); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: escapeLink})
+	if !errors.Is(err, ErrInvalidRestoreDestDir) {
+		t.Fatalf("expected ErrInvalidRestoreDestDir, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreDestDirRejectsUnmountedVolume proves dest_dir must resolve to a
+// volume that is CURRENTLY mounted, not merely one this service knows about
+// (mirroring ResolveVolume's own mount check on the source-volume side).
+func TestRestoreDestDirRejectsUnmountedVolume(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherMount := t.TempDir()
+	other := VolumeInfo{UUID: "vol-2", DevicePath: "/dev/md1", MountPoint: otherMount, Filesystem: "btrfs"}
+	// Deliberately NOT seeded as mounted on the fake runner.
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume, other}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: otherMount})
+	if !errors.Is(err, ErrInvalidRestoreDestDir) {
+		t.Fatalf("expected ErrInvalidRestoreDestDir, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreDestDirRejectsNonBtrfsVolume proves a dest_dir under a known,
+// currently mounted volume that isn't btrfs (not "snapshot-supported") is
+// still rejected — being mounted alone isn't enough.
+func TestRestoreDestDirRejectsNonBtrfsVolume(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherMount := t.TempDir()
+	other := VolumeInfo{UUID: "vol-2", DevicePath: "/dev/md1", MountPoint: otherMount, Filesystem: "ext4"}
+	runner := f.svc.Runner.(*FakeRunner)
+	runner.SeedMounted(other.DevicePath, other.MountPoint)
+
+	_, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume, other}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: otherMount})
+	if !errors.Is(err, ErrInvalidRestoreDestDir) {
+		t.Fatalf("expected ErrInvalidRestoreDestDir, got %v", err)
+	}
+	if len(f.copier.Calls) != 0 {
+		t.Fatalf("expected no copy attempt, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreDestDirAllowsCrossVolumeRestore proves a dest_dir on a
+// DIFFERENT (also mounted, also btrfs) volume than the restore's source is
+// accepted — cross-volume restore is allowed by design, since Copier's
+// reflink-then-plain-copy fallback already handles a destination on a
+// different filesystem.
+func TestRestoreDestDirAllowsCrossVolumeRestore(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherMount := t.TempDir()
+	other := VolumeInfo{UUID: "vol-2", DevicePath: "/dev/md1", MountPoint: otherMount, Filesystem: "btrfs"}
+	runner := f.svc.Runner.(*FakeRunner)
+	runner.SeedMounted(other.DevicePath, other.MountPoint)
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume, other}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: otherMount})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(otherMount, "report.restored-20260713T120000Z.docx")
+	if result.RestoredPath != want {
+		t.Errorf("got restored path %q, want %q", result.RestoredPath, want)
+	}
+	if len(f.copier.Calls) != 1 || !f.copier.Calls[0].Reflink {
+		t.Fatalf("expected 1 reflink copy call, got %+v", f.copier.Calls)
+	}
+}
+
+// TestRestoreDestDirCrossVolumeFallsBackOnReflinkFailure proves the
+// cross-volume dest_dir path composes with Copier's existing
+// reflink-failure fallback (copy.go): a cross-device destination is exactly
+// the case reflink is expected to fail for in practice, and Restore must
+// still succeed via the plain-copy fallback rather than surfacing the
+// reflink error.
+func TestRestoreDestDirCrossVolumeFallsBackOnReflinkFailure(t *testing.T) {
+	f := newRestoreFixture(t)
+	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherMount := t.TempDir()
+	other := VolumeInfo{UUID: "vol-2", DevicePath: "/dev/md1", MountPoint: otherMount, Filesystem: "btrfs"}
+	runner := f.svc.Runner.(*FakeRunner)
+	runner.SeedMounted(other.DevicePath, other.MountPoint)
+
+	dest := filepath.Join(otherMount, "report.restored-20260713T120000Z.docx")
+	f.copier.ReflinkErr[dest] = errors.New("simulated: invalid cross-device link")
+
+	result, err := f.svc.Restore(context.Background(), []VolumeInfo{f.volume, other}, f.volume, f.snapName, "report.docx",
+		RestoreOptions{DestDir: otherMount})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RestoredPath != dest {
+		t.Fatalf("got restored path %q, want %q", result.RestoredPath, dest)
+	}
+	if len(f.copier.Calls) != 1 || f.copier.Calls[0].Reflink {
+		t.Fatalf("expected 1 fallback (non-reflink) call, got %+v", f.copier.Calls)
 	}
 }

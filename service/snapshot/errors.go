@@ -43,4 +43,12 @@ var (
 	// a fresh call to Restore will get a freshly (re-)computed, still
 	// collision-free destination from computeRestoreDestination.
 	ErrRestoreDestinationExists = errors.New("snapshot: restore destination already exists")
+	// ErrInvalidRestoreDestDir means a caller-supplied restore "dest_dir"
+	// override (POST /v2/snapshot/restore) failed validation: empty or not
+	// an absolute path, not located under any currently known volume's
+	// mount point, that volume isn't a currently mounted, snapshot-supported
+	// (btrfs) volume, a symlink redirecting outside that volume's real
+	// mount point, or the directory doesn't already exist (dest_dir is
+	// never auto-created) — see resolveRestoreDestDir in restore_path.go.
+	ErrInvalidRestoreDestDir = errors.New("snapshot: invalid restore destination directory")
 )
