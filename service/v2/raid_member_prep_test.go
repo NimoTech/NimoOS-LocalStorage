@@ -3,6 +3,8 @@ package v2
 import (
 	"strings"
 	"testing"
+
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/mdadm"
 )
 
 func TestPlanMemberDiskPrep_TwoPartitionsOneMounted(t *testing.T) {
@@ -34,25 +36,70 @@ func TestPlanMemberDiskPrep_TwoPartitionsOneMounted(t *testing.T) {
 	}
 }
 
-func TestPlanMemberDiskPrep_RefusesActiveRAIDMember(t *testing.T) {
+func TestPlanMemberDiskPrep_CollectsHolderArrays(t *testing.T) {
 	disk := memberBlockDevice{
 		Name: "sdc",
 		Path: "/dev/sdc",
 		Type: "disk",
 		Children: []memberBlockDevice{
 			{Name: "sdc1", Path: "/dev/sdc1", Type: "part", Children: []memberBlockDevice{
-				{Name: "md1", Path: "/dev/md1", Type: "raid1", MountPoint: "/media/RAID_other"},
+				{Name: "md1", Path: "/dev/md1", Type: "raid1"},
 			}},
+			// 同一 md 设备在 lsblk 树里可出现多次(如整盘+分区两路),要去重。
+			{Name: "md1", Path: "/dev/md1", Type: ""},
 		},
 	}
 
-	_, err := planMemberDiskPrep(disk)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	plan, err := planMemberDiskPrep(disk)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "active RAID") {
-		t.Fatalf("error = %q, want it to contain %q", err.Error(), "active RAID")
+	if len(plan.HolderArrays) != 1 || plan.HolderArrays[0] != "md1" {
+		t.Fatalf("HolderArrays = %v, want [md1]", plan.HolderArrays)
 	}
+	// 被阵列占用的盘:阵列设备本身绝不能进 wipe 列表。
+	for _, w := range plan.WipeTargets {
+		if strings.HasPrefix(w, "/dev/md") {
+			t.Fatalf("WipeTargets = %v must not contain md devices", plan.WipeTargets)
+		}
+	}
+}
+
+func TestClassifyHolder(t *testing.T) {
+	entries := []mdadm.MDStatEntry{
+		{Device: "md0", State: "active", Level: "raid5"},
+		{Device: "md1", State: "inactive"},
+	}
+
+	t.Run("active holder is refused", func(t *testing.T) {
+		needStop, err := classifyHolder(entries, "md0")
+		if err == nil || !strings.Contains(err.Error(), "active RAID array md0") {
+			t.Fatalf("err = %v, want active RAID array refusal", err)
+		}
+		if needStop {
+			t.Fatal("needStop = true, want false for active holder")
+		}
+	})
+
+	t.Run("inactive holder needs stop", func(t *testing.T) {
+		needStop, err := classifyHolder(entries, "md1")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !needStop {
+			t.Fatal("needStop = false, want true for inactive holder")
+		}
+	})
+
+	t.Run("holder missing from mdstat needs nothing", func(t *testing.T) {
+		needStop, err := classifyHolder(entries, "md9")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if needStop {
+			t.Fatal("needStop = true, want false for already-released holder")
+		}
+	})
 }
 
 func TestPlanMemberDiskPrep_WholeDiskFilesystemMounted(t *testing.T) {
