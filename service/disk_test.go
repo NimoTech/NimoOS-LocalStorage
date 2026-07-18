@@ -39,3 +39,23 @@ func TestParseBlockDevices(t *testing.T) {
 	assert.Equal(t, blkList[0].FSAvail.String(), "965102444544")
 	assert.Equal(t, blkList[0].FSUsed.String(), "8229834752")
 }
+
+// TestParseBlockDevices_MountPointsPlural is the direct repro of the root
+// cause behind the missing-RAID-volume bug: lsblk's singular "mountpoint"
+// field only reports a device's LAST mount, but when a btrfs volume has
+// both its @ subvolume and @snapshots subvolume mounted, the plural
+// "mountpoints" array carries every mount. Without parsing it, callers have
+// no way to recover the real (non-.snapshots) mountpoint.
+func TestParseBlockDevices_MountPointsPlural(t *testing.T) {
+	jsonText := `{"blockdevices":[{"name":"md0","path":"/dev/md0","mountpoint":"/media/RAID_0/.snapshots","mountpoints":[null,"/media/RAID_0"]}]}`
+
+	blkList, err := ParseBlockDevices([]byte(jsonText))
+
+	assert.NilError(t, err)
+	assert.Equal(t, len(blkList), 1)
+
+	assert.Equal(t, blkList[0].MountPoint, "/media/RAID_0/.snapshots")
+	assert.Equal(t, len(blkList[0].MountPoints), 2)
+	assert.Equal(t, blkList[0].MountPoints[0], "")
+	assert.Equal(t, blkList[0].MountPoints[1], "/media/RAID_0")
+}

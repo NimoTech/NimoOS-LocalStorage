@@ -28,6 +28,7 @@ type LSBLKModel struct {
 	FSAvail     json.Number  `json:"fsavail"` // 可用空间
 	FSUse       string       `json:"fsuse%"`  // 已用百分比
 	MountPoint  string       `json:"mountpoint"`
+	MountPoints []string     `json:"mountpoints"`
 	Format      string       `json:"format"`
 	Health      string       `json:"health"`
 	HotPlug     bool         `json:"hotplug"`
