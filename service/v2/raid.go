@@ -229,6 +229,15 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 	}
 
 	step(2)
+	// 4. Prepare member disks: unmount their partitions and wipe stale
+	//    partition tables / filesystem signatures. Without this, a disk with a
+	//    mounted partition makes mdadm fail with "Device or resource busy", and
+	//    stale GPT/FS signatures survive onto the member disks (verified live:
+	//    an old ext4 signature on a member leaked into the new md device).
+	if err := s.prepareMemberDisks(diskPaths); err != nil {
+		return nil, err
+	}
+
 	// 4. Zero superblocks to clear any stale RAID metadata from previous attempts.
 	for _, dp := range diskPaths {
 		if err := mdadm.ZeroSuperblock(dp); err != nil {
