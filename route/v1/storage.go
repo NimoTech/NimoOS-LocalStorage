@@ -12,7 +12,6 @@ package v1
 import (
 	"net/http"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"time"
 
@@ -103,10 +102,6 @@ func GetStorageList(ctx echo.Context) error {
 		}
 
 		storageArr := []model1.Storage{}
-		temp := service.MyService.Disk().SmartCTL(currentDisk.Path)
-		if reflect.DeepEqual(temp, model1.SmartctlA{}) {
-			temp.SmartStatus.Passed = true
-		}
 		if len(currentDisk.Children) == 0 && service.IsDiskSupported(currentDisk) {
 			currentDisk.Children = append(currentDisk.Children, currentDisk)
 		}
