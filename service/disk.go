@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -723,9 +722,14 @@ func (d *diskService) InitCheck() {
 }
 
 func (d *diskService) GetSystemDf() (model.DFDiskSpace, error) {
-	out, err := exec.Command("df", "-kPT").Output()
+	// 只查根分区:裸 `df -kPT` 会 statfs 所有挂载点(含 rclone FUSE 云盘),
+	// 云盘失联时会 D 态卡死整个请求(实测 60s+),而本函数只消费 "/" 那一行。
+	// 加超时兜底,且绝不能 log.Fatal——df 失败不该杀死整个服务。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "df", "-kPT", "/").Output()
 	if err != nil {
-		log.Fatal(err)
+		return model.DFDiskSpace{}, fmt.Errorf("df -kPT /: %w", err)
 	}
 
 	outputStr := string(out)
