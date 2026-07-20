@@ -12,7 +12,6 @@ package v1
 import (
 	"net/http"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"time"
 
@@ -43,18 +42,27 @@ func isSnapshotInfraMount(mp string) bool {
 	return mp != "" && filepath.Base(mp) == snapshot.SnapshotsMountSubdir
 }
 
-// filterSnapshotChildren strips .snapshots infrastructure mounts out of a
-// disk's lsblk children before they become storage entries. It must run
-// unconditionally, independent of the "system" query param: on md-RAID the
-// same @snapshots subvolume is mounted once per member disk, so without
-// this filter it would appear once per member (verified live: 3 identical
-// ".snapshots" entries for /dev/sda, /dev/sdc, /dev/sdd), each rendered by
-// the Storage Manager UI with Format/Remove buttons.
-func filterSnapshotChildren(children []model1.LSBLKModel) []model1.LSBLKModel {
+// normalizeSnapshotChildren 把 .snapshots 基础设施挂载从 lsblk children 里
+// 归一化掉:lsblk 的单数 mountpoint 只报设备最后一次挂载,当卷本体(/@)与
+// @snapshots 子卷同时挂载时,单数字段会是 .snapshots 路径。此时应把该 child
+// 的 MountPoint 回填为 mountpoints 数组中第一个非基础设施挂载点,而不是把
+// 整个卷丢弃;只有当该设备的全部挂载点都是 .snapshots 基础设施挂载(或为空)
+// 时才隐藏它(与 ".system_data" 不进文件浏览器同理)。
+func normalizeSnapshotChildren(children []model1.LSBLKModel) []model1.LSBLKModel {
 	out := make([]model1.LSBLKModel, 0, len(children))
 	for _, c := range children {
 		if isSnapshotInfraMount(c.MountPoint) {
-			continue
+			primary := ""
+			for _, mp := range c.MountPoints {
+				if mp != "" && !isSnapshotInfraMount(mp) {
+					primary = mp
+					break
+				}
+			}
+			if primary == "" {
+				continue
+			}
+			c.MountPoint = primary
 		}
 		out = append(out, c)
 	}
@@ -94,14 +102,10 @@ func GetStorageList(ctx echo.Context) error {
 		}
 
 		storageArr := []model1.Storage{}
-		temp := service.MyService.Disk().SmartCTL(currentDisk.Path)
-		if reflect.DeepEqual(temp, model1.SmartctlA{}) {
-			temp.SmartStatus.Passed = true
-		}
 		if len(currentDisk.Children) == 0 && service.IsDiskSupported(currentDisk) {
 			currentDisk.Children = append(currentDisk.Children, currentDisk)
 		}
-		currentDisk.Children = filterSnapshotChildren(currentDisk.Children)
+		currentDisk.Children = normalizeSnapshotChildren(currentDisk.Children)
 		for _, blkChild := range currentDisk.Children {
 			if err == nil {
 				if blkChild.Path == df.FileSystem {

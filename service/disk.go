@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	command2 "github.com/NimoTech/NimoOS-Common/utils/command"
@@ -274,6 +274,24 @@ func (d *diskService) LSBLK(isUseCache bool) []model.LSBLKModel {
 	var fsused uint64
 
 	result := make([]model.LSBLKModel, 0)
+
+	// 并发预热 SMART 缓存:主循环里逐盘 SmartCTL 是串行的,冷缓存时 8 个设备
+	// 累计 ~3s,会拖垮 GET /v1/storage 首帧。先并发探测填缓存,循环内即秒回。
+	var warmWG sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for _, blk := range blkList {
+		if blk.Type == "loop" || blk.RO {
+			continue
+		}
+		warmWG.Add(1)
+		go func(path string) {
+			defer warmWG.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			MyService.Disk().SmartCTL(path)
+		}(blk.Path)
+	}
+	warmWG.Wait()
 
 	for _, blk := range blkList {
 
@@ -704,9 +722,14 @@ func (d *diskService) InitCheck() {
 }
 
 func (d *diskService) GetSystemDf() (model.DFDiskSpace, error) {
-	out, err := exec.Command("df", "-kPT").Output()
+	// 只查根分区:裸 `df -kPT` 会 statfs 所有挂载点(含 rclone FUSE 云盘),
+	// 云盘失联时会 D 态卡死整个请求(实测 60s+),而本函数只消费 "/" 那一行。
+	// 加超时兜底,且绝不能 log.Fatal——df 失败不该杀死整个服务。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "df", "-kPT", "/").Output()
 	if err != nil {
-		log.Fatal(err)
+		return model.DFDiskSpace{}, fmt.Errorf("df -kPT /: %w", err)
 	}
 
 	outputStr := string(out)

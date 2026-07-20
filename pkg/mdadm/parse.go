@@ -117,6 +117,10 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 	// Device line pattern: "md0 : active raid5 sdc[2] sdb[1] sda[0]"
 	// Also handles states like "active (auto-read-only) raid1 ..."
 	deviceRe := regexp.MustCompile(`^(md\d+)\s*:\s*(\w+(?:\s*\([^)]*\))?)\s+(\w+)\s+(.+)$`)
+	// Inactive arrays carry no level between state and members:
+	// "md1 : inactive sdg[1](S)" — without this pattern such arrays would
+	// silently vanish from the parse (and a disk they hold would look free).
+	inactiveRe := regexp.MustCompile(`^(md\d+)\s*:\s*(inactive)\s+(.+)$`)
 	// Disk status bracket pattern: "[UUU]" or "[UU_]"
 	diskStatusRe := regexp.MustCompile(`\[([U_]+)\]`)
 	// Rebuild/recovery percentage: "recovery = 45.2%"
@@ -143,6 +147,19 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 				RebuildPct: -1,
 			}
 			_ = i
+			continue
+		}
+
+		if m := inactiveRe.FindStringSubmatch(line); m != nil {
+			if current != nil {
+				entries = append(entries, *current)
+			}
+			current = &MDStatEntry{
+				Device:     m[1],
+				State:      m[2],
+				Members:    strings.Fields(m[3]),
+				RebuildPct: -1,
+			}
 			continue
 		}
 

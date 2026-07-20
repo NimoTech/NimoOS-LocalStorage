@@ -251,3 +251,37 @@ func TestParseMDStat_Empty(t *testing.T) {
 		t.Errorf("expected 0 entries, got %d", len(entries))
 	}
 }
+
+func TestParseMDStat_InactiveArray(t *testing.T) {
+	out := `Personalities : [raid0] [raid1] [raid5]
+md0 : active raid5 sdd[3] sdf[1] sda[0]
+      1953260544 blocks super 1.2 level 5, 512k chunk, algorithm 2 [3/3] [UUU]
+
+md1 : inactive sdg[1](S)
+      976630488 blocks super 1.2
+
+unused devices: <none>
+`
+	entries, err := ParseMDStat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want 2 (inactive array must not vanish)", len(entries))
+	}
+	var md1 *MDStatEntry
+	for i := range entries {
+		if entries[i].Device == "md1" {
+			md1 = &entries[i]
+		}
+	}
+	if md1 == nil {
+		t.Fatal("md1 missing from parse")
+	}
+	if md1.State != "inactive" {
+		t.Fatalf("md1.State = %q, want inactive", md1.State)
+	}
+	if len(md1.Members) != 1 || md1.Members[0] != "sdg[1](S)" {
+		t.Fatalf("md1.Members = %v, want [sdg[1](S)]", md1.Members)
+	}
+}

@@ -38,62 +38,144 @@ func TestIsSnapshotInfraMount(t *testing.T) {
 	}
 }
 
-// TestFilterSnapshotChildren_ExcludesSnapshotMount is the direct repro of
-// the acceptance defect: GetStorageList must never surface the .snapshots
-// infrastructure mount as a regular storage child, while leaving unrelated
-// mounts on the same disk untouched.
-func TestFilterSnapshotChildren_ExcludesSnapshotMount(t *testing.T) {
+// TestNormalizeSnapshotChildren_RewritesToPrimaryMount is the direct repro
+// of the acceptance defect: lsblk's singular "mountpoint" field only
+// reports a device's LAST mount, so when a btrfs volume's @ subvolume
+// (real storage) and @snapshots subvolume (infrastructure) are BOTH
+// mounted on the same block device, the singular field ends up as the
+// ".snapshots" path. GetStorageList must not discard the whole child in
+// that case — it must rewrite MountPoint back to the real mount recovered
+// from the plural "mountpoints" array.
+func TestNormalizeSnapshotChildren_RewritesToPrimaryMount(t *testing.T) {
 	children := []model1.LSBLKModel{
-		{Name: "sda1", Path: "/dev/sda1", MountPoint: "/media/RAID_0"},
-		{Name: "sda2", Path: "/dev/sda2", MountPoint: "/media/RAID_0/.snapshots"},
+		{
+			Name:        "sda1",
+			Path:        "/dev/sda1",
+			MountPoint:  "/media/RAID_0/.snapshots",
+			MountPoints: []string{"/media/RAID_0/.snapshots", "/media/RAID_0"},
+		},
 	}
 
-	got := filterSnapshotChildren(children)
+	got := normalizeSnapshotChildren(children)
 
 	if len(got) != 1 {
-		t.Fatalf("expected 1 child after filtering, got %d: %+v", len(got), got)
+		t.Fatalf("expected the RAID child to survive normalization, got %d: %+v", len(got), got)
 	}
 	if got[0].MountPoint != "/media/RAID_0" {
-		t.Errorf("expected surviving child to be the normal mount, got %+v", got[0])
-	}
-	for _, c := range got {
-		if c.MountPoint == "/media/RAID_0/.snapshots" {
-			t.Errorf("snapshot mount leaked through filter: %+v", c)
-		}
+		t.Errorf("expected MountPoint rewritten to the primary mount, got %+v", got[0])
 	}
 }
 
-// TestFilterSnapshotChildren_MultiMemberRAID reproduces the live symptom
+// TestNormalizeSnapshotChildren_DropsWhenAllMountsAreSnapshotInfra covers
+// the case where every mount recorded for the device is .snapshots
+// infrastructure (or the mountpoints list is empty/blank) — this must
+// still be hidden, preserving the pre-fix behavior for pure infra mounts.
+func TestNormalizeSnapshotChildren_DropsWhenAllMountsAreSnapshotInfra(t *testing.T) {
+	cases := []struct {
+		name  string
+		child model1.LSBLKModel
+	}{
+		{
+			name: "only the snapshots mount is present",
+			child: model1.LSBLKModel{
+				Name:        "sda2",
+				Path:        "/dev/sda2",
+				MountPoint:  "/media/RAID_0/.snapshots",
+				MountPoints: []string{"/media/RAID_0/.snapshots"},
+			},
+		},
+		{
+			name: "mountpoints is empty",
+			child: model1.LSBLKModel{
+				Name:        "sda2",
+				Path:        "/dev/sda2",
+				MountPoint:  "/media/RAID_0/.snapshots",
+				MountPoints: []string{},
+			},
+		},
+		{
+			name: "mountpoints contains only blank entries",
+			child: model1.LSBLKModel{
+				Name:        "sda2",
+				Path:        "/dev/sda2",
+				MountPoint:  "/media/RAID_0/.snapshots",
+				MountPoints: []string{""},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeSnapshotChildren([]model1.LSBLKModel{tc.child})
+			if len(got) != 0 {
+				t.Errorf("expected child to be dropped, got %+v", got)
+			}
+		})
+	}
+}
+
+// TestNormalizeSnapshotChildren_PlainChildUntouched ensures ordinary
+// children whose singular mountpoint isn't .snapshots infrastructure pass
+// through unmodified.
+func TestNormalizeSnapshotChildren_PlainChildUntouched(t *testing.T) {
+	children := []model1.LSBLKModel{
+		{Name: "sda1", Path: "/dev/sda1", MountPoint: "/media/RAID_0", MountPoints: []string{"/media/RAID_0"}},
+	}
+
+	got := normalizeSnapshotChildren(children)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 child, got %d: %+v", len(got), got)
+	}
+	if got[0].MountPoint != "/media/RAID_0" {
+		t.Errorf("expected untouched MountPoint, got %+v", got[0])
+	}
+}
+
+// TestNormalizeSnapshotChildren_NoPluralFieldFallsBackToDrop covers older
+// util-linux lsblk builds that don't emit "mountpoints" at all (MountPoints
+// is nil). There's no plural data to recover the real mount from, so the
+// child is dropped — same as the pre-fix behavior — rather than risk
+// surfacing the wrong mountpoint.
+func TestNormalizeSnapshotChildren_NoPluralFieldFallsBackToDrop(t *testing.T) {
+	children := []model1.LSBLKModel{
+		{Name: "sda2", Path: "/dev/sda2", MountPoint: "/media/RAID_0/.snapshots", MountPoints: nil},
+	}
+
+	got := normalizeSnapshotChildren(children)
+
+	if len(got) != 0 {
+		t.Errorf("expected child dropped when no plural mountpoints available, got %+v", got)
+	}
+}
+
+// TestNormalizeSnapshotChildren_MultiMemberRAID reproduces the live symptom
 // verbatim: a btrfs volume built on md-RAID exposes the SAME .snapshots
-// mount once per member disk (sda, sdc, sdd). GetStorageList iterates each
-// member disk independently, so the filter must strip .snapshots on every
-// member — not just the first — or the UI still renders duplicate
-// ".snapshots" drives with Format/Remove buttons.
-func TestFilterSnapshotChildren_MultiMemberRAID(t *testing.T) {
+// mount once per member disk (sda, sdc, sdd), each also carrying the real
+// mount in its plural mountpoints array. GetStorageList iterates each
+// member disk independently, so every member must be rewritten to the real
+// mount — not dropped — and never leak the .snapshots path.
+func TestNormalizeSnapshotChildren_MultiMemberRAID(t *testing.T) {
 	members := map[string][]model1.LSBLKModel{
 		"/dev/sda": {
-			{Name: "sda1", Path: "/dev/sda1", MountPoint: "/media/RAID_0"},
-			{Name: "sda1", Path: "/dev/sda1", MountPoint: "/media/RAID_0/.snapshots"},
+			{Name: "sda1", Path: "/dev/sda1", MountPoint: "/media/RAID_0/.snapshots", MountPoints: []string{"/media/RAID_0/.snapshots", "/media/RAID_0"}},
 		},
 		"/dev/sdc": {
-			{Name: "sdc1", Path: "/dev/sdc1", MountPoint: "/media/RAID_0"},
-			{Name: "sdc1", Path: "/dev/sdc1", MountPoint: "/media/RAID_0/.snapshots"},
+			{Name: "sdc1", Path: "/dev/sdc1", MountPoint: "/media/RAID_0/.snapshots", MountPoints: []string{"/media/RAID_0/.snapshots", "/media/RAID_0"}},
 		},
 		"/dev/sdd": {
-			{Name: "sdd1", Path: "/dev/sdd1", MountPoint: "/media/RAID_0"},
-			{Name: "sdd1", Path: "/dev/sdd1", MountPoint: "/media/RAID_0/.snapshots"},
+			{Name: "sdd1", Path: "/dev/sdd1", MountPoint: "/media/RAID_0/.snapshots", MountPoints: []string{"/media/RAID_0/.snapshots", "/media/RAID_0"}},
 		},
 	}
 
 	for disk, children := range members {
-		got := filterSnapshotChildren(children)
-		for _, c := range got {
-			if c.MountPoint == "/media/RAID_0/.snapshots" {
-				t.Errorf("disk %s: snapshot mount leaked through filter: %+v", disk, c)
-			}
-		}
+		got := normalizeSnapshotChildren(children)
 		if len(got) != 1 {
-			t.Errorf("disk %s: expected exactly the normal mount to survive, got %+v", disk, got)
+			t.Errorf("disk %s: expected exactly the normalized RAID child to survive, got %+v", disk, got)
+			continue
+		}
+		if got[0].MountPoint != "/media/RAID_0" {
+			t.Errorf("disk %s: expected MountPoint rewritten to /media/RAID_0, got %+v", disk, got[0])
 		}
 	}
 }

@@ -33,7 +33,10 @@ func ExecEnabledSMART(path string) ([]byte, error) {
 
 // 执行 lsblk 命令
 func ExecLSBLKByPath(path string) []byte {
-	output, err := exec2.Command("lsblk", path, "-O", "-J", "-b").Output()
+	timeout := 10
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	output, err := exec2.CommandContext(ctx, "lsblk", path, "-O", "-J", "-b").Output()
 	if err != nil {
 		fmt.Println("lsblk", err)
 		return nil
@@ -43,7 +46,10 @@ func ExecLSBLKByPath(path string) []byte {
 
 // 执行 lsblk 命令
 func ExecLSBLK() []byte {
-	output, err := exec2.Command("lsblk", "-O", "-J", "-b").Output()
+	timeout := 10
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	output, err := exec2.CommandContext(ctx, "lsblk", "-O", "-J", "-b").Output()
 	if err != nil {
 		fmt.Println("lsblk", err)
 		return nil
