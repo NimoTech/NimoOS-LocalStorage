@@ -21,7 +21,17 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 	// Regex for member disk lines:
 	// "   number  major  minor  raiddevice  state...  /dev/sdX"
 	// Fields: Number Major Minor RaidDevice State... /dev/sdX
-	memberRe := regexp.MustCompile(`^\s+(\d+)\s+\d+\s+\d+\s+\d+\s+(.+?)\s+(/dev/\S+)\s*$`)
+	//
+	// RaidDevice is `\d+|-`: a disk that holds no array slot prints `-` there.
+	// That covers two states the UI depends on — `faulty` (marked bad by
+	// `mdadm --fail`, not yet removed) and an idle `spare` — both of which mdadm
+	// lists after the slot table, e.g.
+	//
+	//     0       8        0        -      faulty   /dev/sda
+	//
+	// Requiring `\d+` here silently dropped every such line, so the frontend's
+	// replace-disk entry (gated on state == "faulty") could never appear.
+	memberRe := regexp.MustCompile(`^\s+(\d+)\s+\d+\s+\d+\s+(?:\d+|-)\s+(.+?)\s+(/dev/\S+)\s*$`)
 
 	// Regex for removed member lines (physically pulled disk):
 	// "   -   0   0   N   removed"
