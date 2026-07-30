@@ -1,6 +1,7 @@
 package mdadm
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -196,6 +197,12 @@ func TestParseDetail_Healthy(t *testing.T) {
 	if d.Members[2].Path != "/dev/sdc" {
 		t.Errorf("Members[2].Path: got %q, want %q", d.Members[2].Path, "/dev/sdc")
 	}
+	// 健康阵列每块盘都占槽位
+	for i, m := range d.Members {
+		if m.Slot != i {
+			t.Errorf("Members[%d].Slot: got %d, want %d", i, m.Slot, i)
+		}
+	}
 }
 
 func TestParseDetail_Rebuilding(t *testing.T) {
@@ -260,6 +267,12 @@ func TestParseDetail_DegradedWithFaultyMember(t *testing.T) {
 	if faulty.Number != 0 {
 		t.Errorf("faulty Number: got %d, want 0", faulty.Number)
 	}
+	// Slot = 占哪个阵列槽位,-1 = 不占。被踢出槽位的 faulty 盘必须是 -1,否则调用方
+	// 无法把"组成阵列的行"与"挂在阵列上但不占槽位的盘"分开 —— 3 盘 RAID 5 坏 1 块
+	// 会被数成 4 块盘(卡片 4 个方块却写 2/3、详情页头写 MEMBER DISKS (4))。
+	if faulty.Slot != -1 {
+		t.Errorf("faulty Slot: got %d, want -1(RaidDevice 列是 -)", faulty.Slot)
+	}
 
 	// removed 空槽仍应保留(物理拔盘场景依赖它)
 	var removed *MemberDisk
@@ -273,6 +286,34 @@ func TestParseDetail_DegradedWithFaultyMember(t *testing.T) {
 	}
 	if removed.Path != "" {
 		t.Errorf("removed Path: got %q, want empty", removed.Path)
+	}
+	if removed.Slot != 0 {
+		t.Errorf("removed Slot: got %d, want 0", removed.Slot)
+	}
+
+	// 占槽位的两块好盘:Slot 取 RaidDevice 列(1 和 2),不是 Number 列(1 和 3)。
+	slots := map[string]int{}
+	for _, m := range d.Members {
+		if m.Path != "" && strings.HasPrefix(m.State, "active sync") {
+			slots[m.Path] = m.Slot
+		}
+	}
+	if slots["/dev/sdb"] != 1 {
+		t.Errorf("sdb Slot: got %d, want 1", slots["/dev/sdb"])
+	}
+	if slots["/dev/sdc"] != 2 {
+		t.Errorf("sdc Slot: got %d, want 2(RaidDevice 列;它的 Number 列是 3)", slots["/dev/sdc"])
+	}
+
+	// 占槽位的行数应等于阵列盘位数(3),而不是总行数(4)。
+	occupied := 0
+	for _, m := range d.Members {
+		if m.Slot >= 0 {
+			occupied++
+		}
+	}
+	if occupied != 3 {
+		t.Errorf("占槽位行数: got %d, want 3(总行数 %d)", occupied, len(d.Members))
 	}
 }
 
@@ -294,6 +335,9 @@ func TestParseDetail_IdleSpare(t *testing.T) {
 	}
 	if spare.Number != 4 {
 		t.Errorf("spare Number: got %d, want 4", spare.Number)
+	}
+	if spare.Slot != -1 {
+		t.Errorf("spare Slot: got %d, want -1(闲置热备不占槽位)", spare.Slot)
 	}
 }
 

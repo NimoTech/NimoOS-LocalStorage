@@ -52,6 +52,10 @@ type MemberDiskStatus struct {
 	Path   string `json:"path"`
 	State  string `json:"state"`
 	Number int    `json:"number"`
+	// Slot is the array slot this entry occupies, or -1 for none (ejected faulty
+	// disk / idle spare). Clients need it to count array slots rather than rows:
+	// a degraded 3-disk RAID 5 yields 4 rows (vacated slot + ejected disk).
+	Slot int `json:"slot"`
 }
 
 var validDevicePath = regexp.MustCompile(`^/dev/(sd[a-z]+[0-9]*|nvme[0-9]+n[0-9]+(p[0-9]+)?|md[0-9]+)$`)
@@ -509,6 +513,7 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 			Path:   m.Path,
 			State:  m.State,
 			Number: m.Number,
+			Slot:   m.Slot,
 		})
 	}
 
