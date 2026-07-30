@@ -450,6 +450,12 @@ func (s *raidService) DeleteRAIDArray(id uint) error {
 		return fmt.Errorf("delete RAID from db: %w", err)
 	}
 
+	// 8. Drop the boot-time persistence created alongside the array: the
+	// @snapshots line in /etc/fstab and the ARRAY line in /etc/mdadm/mdadm.conf.
+	// Runs last on purpose — mdadm.conf is regenerated from the live arrays, so
+	// the array has to be stopped (step 5) before it can be dropped from it.
+	cleanupRAIDPersistence(raid.MountPoint)
+
 	return nil
 }
 
