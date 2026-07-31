@@ -14,7 +14,7 @@ info:
 
     This API allows interacting with the service to conduct such management.
 
-    For issues and discussions, please visit the [GitHub repository](https://github.com/NimoTech/NimoOS) or join [our Discord](https://discord.com/servers/nimo-pc-1461244017105703069).
+    For issues and discussions, please visit the [GitHub repository](https://github.com/NimoTech/NimoOS) or join [our Discord](https://discord.com/invite/8NStGMweZh).
 
 servers:
   - url: /v2/local_storage
