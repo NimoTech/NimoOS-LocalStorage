@@ -29,3 +29,8 @@ nimoos-local-storage
 # Apple hidden files
 ._*
 .DS_Store
+
+# Build artifacts. nimoos-local-storage-fixed (75MB) was tracked here; Go binaries
+# embed the build machine's module paths, so it carried ~2600 path strings too.
+nimoos-local-storage-fixed
+nimoos-local-storage
