@@ -194,7 +194,7 @@ POST /v2/raid → 202 + task_id（同一时间只允许一个创建任务）
 3. 停阵列前先 `vgchange -an` 停用以该设备为 PV 的 LVM 卷组；
 4. `mdadm --stop` 后对可解析到的成员盘 zero superblock，最后删 DB 记录。
 
-**mdadm 二进制**：优先系统安装的 mdadm，支持 `MDADM_PATH` 环境变量覆盖，未安装时回退捆绑二进制（`pkg/mdadm/mdadm.go`）。
+**mdadm 二进制**：用系统安装的 mdadm(经 PATH 解析),支持 `MDADM_PATH` 环境变量覆盖(`pkg/mdadm/mdadm.go`)。启动时 `mdadm.CheckSupport()` 探测一次,未安装则记一条日志说明 RAID 功能不可用,与 btrfs 工具链同样处理。
 
 ### USB / 新分区自动挂载（`misc.go` + `service/disk.go`）
 
@@ -288,7 +288,7 @@ EnableMergerFS = false
 | mount/umount | 文件系统挂载操作 |
 | fdisk/parted | 分区管理 |
 | mkfs / wipefs | 文件系统格式化、签名清除 |
-| mdadm | 软件 RAID（未安装时回退捆绑二进制） |
+| mdadm | 软件 RAID(由发行版安装,`mdadm` 包) |
 | btrfs-progs / resize2fs | btrfs 子卷与用量、文件系统扩容 |
 | pvs / vgchange (LVM) | 删除 RAID 前停用关联卷组 |
 | rclone | 远程存储挂载 |

@@ -72,6 +72,10 @@ type raidService struct {
 
 // NewRAIDService creates a new RAIDService backed by the given database.
 func NewRAIDService(db *gorm.DB) RAIDService {
+	if err := mdadm.CheckSupport(); err != nil {
+		logger.Info("mdadm is unavailable at startup; RAID features will fail", zap.Error(err))
+	}
+
 	if err := checkBtrfsSupport(); err != nil {
 		logger.Info("btrfs tooling is unavailable at startup; btrfs create/usage features may fail", zap.Error(err))
 	}
