@@ -44,12 +44,15 @@ func isSnapshotInfraMount(mp string) bool {
 	return mp != "" && filepath.Base(mp) == snapshot.SnapshotsMountSubdir
 }
 
-// normalizeSnapshotChildren 把 .snapshots 基础设施挂载从 lsblk children 里
-// 归一化掉:lsblk 的单数 mountpoint 只报设备最后一次挂载,当卷本体(/@)与
-// @snapshots 子卷同时挂载时,单数字段会是 .snapshots 路径。此时应把该 child
-// 的 MountPoint 回填为 mountpoints 数组中第一个非基础设施挂载点,而不是把
-// 整个卷丢弃;只有当该设备的全部挂载点都是 .snapshots 基础设施挂载(或为空)
-// 时才隐藏它(与 ".system_data" 不进文件浏览器同理)。
+// normalizeSnapshotChildren normalizes away .snapshots infrastructure mounts
+// from the lsblk children: lsblk's singular mountpoint field only reports the
+// device's most recent mount, so when the volume itself (/@) and the
+// @snapshots subvolume are both mounted, the singular field can end up being
+// the .snapshots path. In that case the child's MountPoint should be
+// backfilled with the first non-infrastructure mount point from the
+// mountpoints array, rather than dropping the whole volume; it's only hidden
+// when every mount point on that device is a .snapshots infrastructure mount
+// (or empty) — the same treatment ".system_data" gets in the file browser.
 func normalizeSnapshotChildren(children []model1.LSBLKModel) []model1.LSBLKModel {
 	out := make([]model1.LSBLKModel, 0, len(children))
 	for _, c := range children {

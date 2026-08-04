@@ -6,7 +6,7 @@ import "sync"
 // currently paused" reason the space guard (Scheduler) recomputes every
 // tick. It backs VolumeStatus.PausedReason (handoff §3.4's GET
 // /v2/snapshot/volumes field) — a placeholder B2 left permanently empty
-// pending this task ("PausedReason 恒为空,B3 接管").
+// pending this task ("PausedReason is permanently empty, B3 takes it over").
 //
 // A nil *PauseState behaves as "nothing is ever paused" (all methods are
 // nil-receiver safe), so existing callers/tests built before this task
@@ -44,7 +44,7 @@ func (p *PauseState) Set(volumeUUID, reason string) {
 }
 
 // Clear marks volumeUUID as no longer paused (automatic resume — handoff
-// §3.3: "恢复后自动续").
+// §3.3: "resumes automatically once recovered").
 func (p *PauseState) Clear(volumeUUID string) {
 	if p == nil {
 		return

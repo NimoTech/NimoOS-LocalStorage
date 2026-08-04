@@ -128,8 +128,8 @@ func (o RestoreOptions) onConflict() (string, error) {
 
 // computeRestoreDestination picks the destination for restoring a file or
 // directory named name into destDir, timestamped ts, guaranteeing it never
-// overwrites an existing path (handoff §2.1/§6: "取回...不覆盖现有同名文
-// 件"/"restore 永不覆盖:目标已存在...同名时追加序号"):
+// overwrites an existing path (handoff §2.1/§6: "restoring...never overwrites
+// an existing file of the same name"/"restore never overwrites: if the destination already exists...append a number when the name matches"):
 //
 //   - withMarker=true (the original, default behavior) — regular files with
 //     a recognizable extension: the ".restored-<ts>" marker is inserted

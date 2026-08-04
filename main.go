@@ -85,7 +85,7 @@ func init() {
 		return
 	}
 
-	// 自动检查并挂载之前保存的磁盘
+	// Automatically check and remount previously saved disks
 	service.MyService.Disk().CheckSerialDiskMount()
 
 	checkToken2_11()

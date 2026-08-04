@@ -10,8 +10,8 @@ import (
 // DELETE /v2/snapshot/:name) and returns the absolute path to that snapshot
 // subvolume on disk, under volume's .snapshots directory.
 //
-// Three independent checks defend against path traversal (handoff's "校验
-// name 属于该卷 .snapshots,防路径穿越"):
+// Three independent checks defend against path traversal (handoff's "verify
+// that name belongs to that volume's .snapshots, to prevent path traversal"):
 //
 //  1. name must not contain a path separator at all. A name produced by our
 //     own FormatName never does (SanitizeLabel strips "/" and "\" from the

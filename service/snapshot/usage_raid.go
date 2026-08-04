@@ -8,7 +8,7 @@ import (
 )
 
 // RAIDUsageProvider adapts v2.RAIDService's cached btrfs usage query (handoff
-// §3.3: "复用 service/v2/raid_usage.go 的 btrfs usage 查询") into the
+// §3.3: "reuse service/v2/raid_usage.go's btrfs usage query") into the
 // UsageProvider interface the scheduler depends on.
 //
 // "Volume" is a RAID array today (VolumesFromRAIDArrays' doc comment), but

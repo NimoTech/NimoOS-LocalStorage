@@ -312,7 +312,7 @@ func TestListVolumeStatusesReflectsLivePauseState(t *testing.T) {
 
 func TestListVolumeStatusesPausedReasonEmptyWithoutPauseState(t *testing.T) {
 	// svc.Pause is left nil (as newTestService leaves it) — must not panic
-	// and must report empty, not the stale "B3 接管" placeholder text.
+	// and must report empty, not the stale "B3 takes over" placeholder text.
 	svc, runner, _ := newTestService(t)
 	vol := serviceTestVolume(t)
 	runner.SeedMounted(vol.DevicePath, vol.MountPoint)

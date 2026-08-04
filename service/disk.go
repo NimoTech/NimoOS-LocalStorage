@@ -119,7 +119,7 @@ func (d *diskService) SmartCTL(path string) model.SmartctlA {
 	return m
 }
 
-// 格式化硬盘
+// FormatDisk formats a disk
 func (d *diskService) FormatDisk(path string) error {
 	// wait for partition path to be ready
 	count := 5
@@ -145,7 +145,7 @@ func (d *diskService) FormatDisk(path string) error {
 	return nil
 }
 
-// 移除挂载点,删除目录
+// UmountPointAndRemoveDir unmounts the mount point and removes the directory
 func (d *diskService) UmountPointAndRemoveDir(m model.LSBLKModel) error {
 	if len(m.MountPoint) > 0 {
 		if err := mount.UmountByMountPoint(m.MountPoint); err != nil {
@@ -275,8 +275,10 @@ func (d *diskService) LSBLK(isUseCache bool) []model.LSBLKModel {
 
 	result := make([]model.LSBLKModel, 0)
 
-	// 并发预热 SMART 缓存:主循环里逐盘 SmartCTL 是串行的,冷缓存时 8 个设备
-	// 累计 ~3s,会拖垮 GET /v1/storage 首帧。先并发探测填缓存,循环内即秒回。
+	// Warm the SMART cache concurrently: in the main loop, SmartCTL per disk
+	// runs serially, and with a cold cache 8 devices add up to ~3s, which
+	// would stall the first frame of GET /v1/storage. Probe concurrently to
+	// fill the cache first, so the loop itself returns instantly.
 	var warmWG sync.WaitGroup
 	sem := make(chan struct{}, 8)
 	for _, blk := range blkList {
@@ -722,9 +724,12 @@ func (d *diskService) InitCheck() {
 }
 
 func (d *diskService) GetSystemDf() (model.DFDiskSpace, error) {
-	// 只查根分区:裸 `df -kPT` 会 statfs 所有挂载点(含 rclone FUSE 云盘),
-	// 云盘失联时会 D 态卡死整个请求(实测 60s+),而本函数只消费 "/" 那一行。
-	// 加超时兜底,且绝不能 log.Fatal——df 失败不该杀死整个服务。
+	// Only checks the root partition: a bare `df -kPT` does statfs on every
+	// mount point (including rclone FUSE cloud mounts), and if a cloud mount
+	// is disconnected it can hang the whole request in D state (60s+ in
+	// practice), while this function only consumes the "/" line anyway.
+	// Add a timeout as a fallback, and never log.Fatal — a df failure
+	// shouldn't kill the whole service.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "df", "-kPT", "/").Output()
@@ -733,15 +738,15 @@ func (d *diskService) GetSystemDf() (model.DFDiskSpace, error) {
 	}
 
 	outputStr := string(out)
-	// 按行分割字符串
+	// split the output into lines
 	lines := strings.Split(outputStr, "\n")
-	// 忽略第一行（标题行）
+	// skip the first line (header)
 	lines = lines[1:]
-	// 遍历每一行，解析文件信息
+	// iterate over each line, parsing file info
 	for _, line := range lines {
-		// 分割行，获取各个字段
+		// split the line into fields
 		fields := strings.Fields(line)
-		// 如果行为空，则跳过
+		// skip empty lines
 		if len(fields) == 0 {
 			continue
 		}

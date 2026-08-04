@@ -4,7 +4,7 @@ import "time"
 
 // Clock abstracts "now" so the scheduler's due/retention decisions can be
 // driven by controlled, test-injected time instead of real wall-clock waits
-// (handoff §3.3 / task-B3 brief: "可注入时钟...以便单测").
+// (handoff §3.3 / task-B3 brief: "an injectable clock ... for unit testing").
 type Clock interface {
 	Now() time.Time
 }

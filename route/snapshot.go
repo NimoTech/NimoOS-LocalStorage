@@ -86,7 +86,7 @@ type createSnapshotRequest struct {
 }
 
 // restoreRequest is the body for POST /v2/snapshot/restore (handoff §3.4:
-// "{volume_uuid, snapshot, path}; path=卷内相对路径"). Two optional fields
+// "{volume_uuid, snapshot, path}; path=path relative to the volume"). Two optional fields
 // extend it while staying backward compatible (both default to the
 // original behavior when omitted):
 //

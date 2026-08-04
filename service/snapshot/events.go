@@ -24,7 +24,7 @@ const (
 // EventPublisher is the scheduler's seam to the MessageBus (misc.go's
 // PublishEventWithResponse call is the production pattern this wraps), kept
 // deliberately tiny so tests can assert exactly what was published (name +
-// properties) without a real bus (task-B3 brief: "事件发布行为behind a small
+// properties) without a real bus (task-B3 brief: "event publishing behind a small
 // injectable interface").
 type EventPublisher interface {
 	Publish(ctx context.Context, name string, properties map[string]string) error
