@@ -13,17 +13,26 @@ import (
 
 const DefaultMdadmPath = "mdadm"
 
-// MdadmPath is the path to the mdadm binary.
-// Prefers system-installed mdadm; falls back to the bundled binary.
-var MdadmPath = func() string {
+// MdadmPath is the path to the mdadm binary: the distribution's mdadm, resolved
+// through PATH, unless MDADM_PATH overrides it.
+var MdadmPath = resolveMdadmPath()
+
+func resolveMdadmPath() string {
 	if p := os.Getenv("MDADM_PATH"); p != "" {
 		return p
 	}
-	if _, err := exec.LookPath("mdadm"); err == nil {
-		return "mdadm"
+	return DefaultMdadmPath
+}
+
+// CheckSupport reports whether the mdadm binary can be found, so callers can
+// log a useful message at startup instead of surfacing an exec failure on the
+// first RAID operation.
+func CheckSupport() error {
+	if _, err := exec.LookPath(MdadmPath); err != nil {
+		return fmt.Errorf("%s not found: please install mdadm", MdadmPath)
 	}
-	return "/home/nimo/NimoOS-dev/NimoOS-LocalStorage/bin/mdadm"
-}()
+	return nil
+}
 
 // Create creates a new RAID array.
 // mdadm --create <device> --level=<level> --raid-devices=<n> [--chunk=<kb>] --run <members...>
