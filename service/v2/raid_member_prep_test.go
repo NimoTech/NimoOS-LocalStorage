@@ -45,7 +45,8 @@ func TestPlanMemberDiskPrep_CollectsHolderArrays(t *testing.T) {
 			{Name: "sdc1", Path: "/dev/sdc1", Type: "part", Children: []memberBlockDevice{
 				{Name: "md1", Path: "/dev/md1", Type: "raid1"},
 			}},
-			// 同一 md 设备在 lsblk 树里可出现多次(如整盘+分区两路),要去重。
+			// The same md device can appear more than once in the lsblk tree
+			// (e.g. via both the whole disk and the partition path), so it must be deduplicated.
 			{Name: "md1", Path: "/dev/md1", Type: ""},
 		},
 	}
@@ -57,7 +58,7 @@ func TestPlanMemberDiskPrep_CollectsHolderArrays(t *testing.T) {
 	if len(plan.HolderArrays) != 1 || plan.HolderArrays[0] != "md1" {
 		t.Fatalf("HolderArrays = %v, want [md1]", plan.HolderArrays)
 	}
-	// 被阵列占用的盘:阵列设备本身绝不能进 wipe 列表。
+	// A disk occupied by an array: the array device itself must never end up in the wipe list.
 	for _, w := range plan.WipeTargets {
 		if strings.HasPrefix(w, "/dev/md") {
 			t.Fatalf("WipeTargets = %v must not contain md devices", plan.WipeTargets)

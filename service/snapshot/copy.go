@@ -23,7 +23,7 @@ type Copier interface {
 	// Copy copies src to dest, preferring a reflink (copy-on-write) copy
 	// and falling back to a plain deep copy if that fails — handoff §3.4:
 	// "cp -a --reflink=always <snap>/<path> <live>/<path>.restored-<ts>;
-	// reflink 失败(理论同盘不该发生)回退普通 cp -a".
+	// if reflink fails (shouldn't happen on the same filesystem in theory) fall back to a plain cp -a".
 	//
 	// Copy DOES check whether dest already exists, both itself (an
 	// explicit stat immediately before shelling out) and via the
@@ -43,8 +43,8 @@ type Copier interface {
 
 // ExecCopier is the production Copier: it shells out to `cp`, with a
 // timeout and stderr-to-log on failure (matching ExecRunner's pattern in
-// btrfs.go — handoff §3.1's "所有外部命令经 exec 封装、超时保护、stderr 入
-// 日志" applies here too, even though this isn't a btrfs-specific command).
+// btrfs.go — handoff §3.1's "every external command goes through an exec
+// wrapper, with a timeout guard and stderr logging" applies here too, even though this isn't a btrfs-specific command).
 type ExecCopier struct {
 	// Timeout bounds each `cp` invocation; DefaultCommandTimeout is used if
 	// zero. A large copy (e.g. restoring tens of GB with a reflink, which

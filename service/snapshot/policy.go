@@ -2,7 +2,7 @@ package snapshot
 
 import "github.com/NimoTech/NimoOS-LocalStorage/service/model"
 
-// Recommended default policy values (handoff §2.1 "简单模式默认值即推荐值"):
+// Recommended default policy values (handoff §2.1 "the simple-mode defaults are the recommended values"):
 // hourly x24 (a day), daily x7 (a week), weekly x4 (a month), pause
 // automatic snapshots once the volume is 90% full.
 const (

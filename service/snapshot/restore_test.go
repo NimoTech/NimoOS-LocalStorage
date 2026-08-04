@@ -558,8 +558,8 @@ func TestRestoreSnapshotNotOnDiskIsRejected(t *testing.T) {
 // TestRestoreFallsBackWhenReflinkFails proves Restore's copy step actually
 // takes FakeCopier's injected reflink-failure fallback path — i.e. the
 // service layer doesn't special-case reflink failures itself, it just
-// trusts Copier to do the right thing (handoff §3.4: "reflink 失败...回退
-// 普通 cp -a").
+// trusts Copier to do the right thing (handoff §3.4: "if reflink fails...fall
+// back to a plain cp -a").
 func TestRestoreFallsBackWhenReflinkFails(t *testing.T) {
 	f := newRestoreFixture(t)
 	if err := os.WriteFile(filepath.Join(f.snapDir, "report.docx"), []byte("data"), 0o644); err != nil {

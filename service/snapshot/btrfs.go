@@ -13,8 +13,8 @@ import (
 )
 
 // DefaultCommandTimeout bounds every external command Runner executes, so a
-// wedged btrfs/mount binary can never hang the caller (handoff §3.1: "所有
-// 外部命令经 exec 封装、超时保护、stderr 入日志").
+// wedged btrfs/mount binary can never hang the caller (handoff §3.1: "every
+// external command goes through an exec wrapper, with a timeout guard and stderr logging").
 const DefaultCommandTimeout = 30 * time.Second
 
 // SubvolumeEntry is one row parsed from `btrfs subvolume list`.
@@ -62,7 +62,7 @@ type Runner interface {
 
 // FilterSnapshotNames extracts snapshot subvolume names — the direct
 // children of @snapshots — from a full `btrfs subvolume list` result
-// (handoff §3.2: "以 btrfs subvolume list(过滤 .snapshots 下)为事实来源").
+// (handoff §3.2: "use btrfs subvolume list (filtered under .snapshots) as the source of truth").
 // Entries deeper than one level under @snapshots (which shouldn't normally
 // occur) are ignored rather than mis-parsed.
 func FilterSnapshotNames(entries []SubvolumeEntry) []string {

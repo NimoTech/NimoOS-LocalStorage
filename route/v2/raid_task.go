@@ -7,17 +7,18 @@ import (
 	"time"
 )
 
-// CreateTask 存储一次 RAID 创建任务的状态。
-// sync.Map 存值拷贝（非指针），每次更新用 Store 整体替换，避免 Data Race。
+// CreateTask stores the state of a single RAID creation task.
+// sync.Map stores a value copy (not a pointer); every update replaces the
+// whole entry via Store to avoid a data race.
 type CreateTask struct {
 	TaskID    string
 	Status    string // "creating" | "done" | "failed"
-	Step      int    // 0=未开始, 1–6=当前步骤
-	Progress  int    // 0–100
+	Step      int    // 0=not started, 1-6=current step
+	Progress  int    // 0-100
 	StartTime time.Time
 	RaidID    *uint
 	Error     string
-	// 业务上下文：刷新页面后前端重建 UI 所需
+	// Business context: needed by the frontend to rebuild the UI after a page refresh
 	Name       string
 	Level      int
 	Filesystem string
@@ -26,7 +27,7 @@ type CreateTask struct {
 
 var (
 	taskStore  sync.Map
-	createLock sync.Mutex // 保护"查重 + 写入"的原子性
+	createLock sync.Mutex // guards the atomicity of "check for duplicate + write"
 )
 
 func generateTaskID() string {
@@ -49,7 +50,7 @@ func loadTask(id string) (CreateTask, bool) {
 	return v.(CreateTask), true
 }
 
-// hasCreatingTask 检查是否存在进行中的任务（在 createLock 持有期间调用）。
+// hasCreatingTask checks whether a task is currently in progress (called while holding createLock).
 func hasCreatingTask() bool {
 	found := false
 	taskStore.Range(func(_, v any) bool {
@@ -62,7 +63,7 @@ func hasCreatingTask() bool {
 	return found
 }
 
-// scheduleTaskCleanup 在任务完成 5 分钟后自动从内存中删除。
+// scheduleTaskCleanup automatically removes the task from memory 5 minutes after it completes.
 func scheduleTaskCleanup(taskID string) {
 	go func() {
 		time.Sleep(5 * time.Minute)

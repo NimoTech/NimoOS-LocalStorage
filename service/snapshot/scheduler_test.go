@@ -293,7 +293,7 @@ func TestSchedulerPreopNotYetExpiredIsKept(t *testing.T) {
 func TestSchedulerCleansBeforeCreatingSameTick(t *testing.T) {
 	// hourly_keep=2; 3 pre-existing hourly snapshots, the oldest due for
 	// cleanup, and the newest old enough that a new hourly is *also* due
-	// this same tick. "先清后建" means: cleanup trims to 2 (the pre-tick
+	// this same tick. "clean before create" means: cleanup trims to 2 (the pre-tick
 	// newest two) THEN a new one is created — final count is 3, and the
 	// survivor set proves cleanup ran against the pre-creation set, not a
 	// set that already includes the new snapshot (which would instead

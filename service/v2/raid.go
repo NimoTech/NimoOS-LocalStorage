@@ -294,7 +294,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		_ = mdadm.Stop(device)
 		return nil, fmt.Errorf("mount %s on %s: %w", device, mountPoint, err)
 	}
-	// 取消给btrfs添加no_cow_policy的文件夹
+	// disabled: applying no_cow_policy to the btrfs directory
 	// if fs == "btrfs" {
 	// 	applyNoCoWPolicy(mountPoint)
 	// }

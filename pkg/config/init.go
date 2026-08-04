@@ -85,7 +85,7 @@ func SaveSetup(config string) {
 	}
 }
 
-// 映射
+// mapTo maps a config section onto v
 func mapTo(section string, v interface{}) {
 	err := Cfg.Section(section).MapTo(v)
 	if err != nil {

@@ -15,12 +15,12 @@ import (
 )
 
 // TickInterval is how often the scheduler wakes to evaluate every known
-// volume (handoff §3.3: "服务内 goroutine ticker,每分钟醒一次判断,不依赖
-// 系统 cron").
+// volume (handoff §3.3: "an in-process goroutine ticker, waking once a minute
+// to evaluate, without depending on the system cron").
 const TickInterval = time.Minute
 
-// Cadence periods for the three automatic snapshot types (handoff §3.3: "该
-// 卷该档最近一次快照距今 ≥ 周期 → 创建").
+// Cadence periods for the three automatic snapshot types (handoff §3.3: "if
+// time since that volume's most recent snapshot at that tier ≥ the period → create one").
 const (
 	HourlyPeriod = time.Hour
 	DailyPeriod  = 24 * time.Hour
@@ -38,14 +38,14 @@ var cadencePeriods = map[string]time.Duration{
 var cadenceOrder = []string{TypeAutoHourly, TypeAutoDaily, TypeAutoWeekly}
 
 // FailureEventThreshold is how many consecutive creation failures for a
-// volume trigger nimoos:snapshot:failed (handoff §3.5: "连续失败≥3 才发").
+// volume trigger nimoos:snapshot:failed (handoff §3.5: "only send after ≥3 consecutive failures").
 const FailureEventThreshold = 3
 
 // FailureEventThrottle and PausedEventThrottle bound how often the
 // failed/paused MessageBus events repeat for the same volume while the
 // underlying condition persists, so a stuck volume doesn't spam the
-// bus/UI once a minute forever (handoff §3.5: "带节流" / "同一告警 24h 一
-// 次"). The handoff only states an explicit window for the paused alert
+// bus/UI once a minute forever (handoff §3.5: "throttled" / "the same alert
+// once per 24h"). The handoff only states an explicit window for the paused alert
 // (24h); FailureEventThrottle reuses the same window for consistency —
 // there's no stated reason a persistent creation failure deserves a
 // different alert cadence than a persistent space shortage.
@@ -56,7 +56,7 @@ const (
 
 // VolumeListerFunc enumerates every volume the scheduler should consider
 // this tick. It must not cache: handoff §3.3 requires every tick to
-// re-enumerate "已挂载且启用策略的 btrfs 卷" freshly, since volumes can be
+// re-enumerate "mounted btrfs volumes with the policy enabled" freshly, since volumes can be
 // hot-plugged/removed between ticks. Scheduler never caches its result
 // itself, either — it calls this on every RunOnce.
 type VolumeListerFunc func(ctx context.Context) ([]VolumeInfo, error)
@@ -135,7 +135,7 @@ func NewScheduler(cfg SchedulerConfig) *Scheduler {
 // Run blocks, waking every TickInterval (or whatever Scheduler.NewTicker
 // produces) until ctx is done. Its lifecycle follows the owning service's:
 // callers start it with `go scheduler.Run(ctx)` using the same ctx the
-// service cancels on shutdown (handoff/B3 brief: "跟随服务启动/停止").
+// service cancels on shutdown (handoff/B3 brief: "follows the service's start/stop").
 func (s *Scheduler) Run(ctx context.Context) {
 	ticker := s.NewTicker(TickInterval)
 	defer ticker.Stop()
@@ -169,7 +169,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 
 // tickVolume evaluates one volume for one tick: eligibility gates, then
 // retention cleanup, then (space-guard-gated) creation of due cadences —
-// in that order ("先清后建", handoff §3.3).
+// in that order ("clean before create", handoff §3.3).
 func (s *Scheduler) tickVolume(ctx context.Context, v VolumeInfo, now time.Time) {
 	if !strings.EqualFold(v.Filesystem, "btrfs") {
 		return
@@ -220,7 +220,7 @@ func (s *Scheduler) tickVolume(ctx context.Context, v VolumeInfo, now time.Time)
 		return
 	}
 
-	// Clean before create ("先清后建"): retention/preop-expiry deletes are
+	// Clean before create ("clean before create"): retention/preop-expiry deletes are
 	// applied against the pre-tick snapshot set before any new snapshot
 	// this tick is considered, so a just-created snapshot can never be
 	// mistaken for one of the N-1 that should have already been trimmed.
@@ -258,7 +258,7 @@ func (s *Scheduler) cleanup(ctx context.Context, v VolumeInfo, snaps []model.Sna
 }
 
 // createDue applies the space guard once per volume per tick (handoff
-// §3.3: "创建前查卷使用率"), then attempts every due cadence if the volume
+// §3.3: "check volume usage before creating"), then attempts every due cadence if the volume
 // isn't over threshold.
 func (s *Scheduler) createDue(ctx context.Context, v VolumeInfo, policy model.SnapshotPolicy, due []string, now time.Time) {
 	threshold := clampPauseThreshold(policy.PauseThresholdPct)
@@ -320,7 +320,7 @@ func (s *Scheduler) pause(volumeUUID, reason string, now time.Time) {
 
 // resolvePause clears any pause state for volumeUUID and resets its
 // throttle window, so a fresh 24h window starts the next time this volume
-// pauses (handoff: "恢复后自动续" — recovery isn't just "stop skipping
+// pauses (handoff: "resumes automatically once recovered" — recovery isn't just "stop skipping
 // creation", it's a clean slate for future alerts too).
 func (s *Scheduler) resolvePause(volumeUUID string) {
 	s.Pause.Clear(volumeUUID)
@@ -394,7 +394,7 @@ func failureKey(volumeUUID, snapType string) string {
 // recordFailure tracks a consecutive-failure streak per (volume, cadence
 // type) and publishes nimoos:snapshot:failed once the streak reaches
 // FailureEventThreshold, throttled to at most once per FailureEventThrottle
-// while the streak continues (handoff §3.5: "连续失败≥3 才发,带节流").
+// while the streak continues (handoff §3.5: "only send after ≥3 consecutive failures, throttled").
 func (s *Scheduler) recordFailure(volumeUUID, snapType string, cause error, now time.Time) {
 	key := failureKey(volumeUUID, snapType)
 
@@ -450,7 +450,7 @@ func lastByType(snaps []model.Snapshot) map[string]time.Time {
 // create a new snapshot right now: due if no snapshot of that type exists
 // yet (bootstrap — a freshly-enabled volume gets all three cadences on its
 // first eligible tick), or if the most recent one is at least a full period
-// old (handoff §3.3: "最近一次快照距今 ≥ 周期 → 创建"). Pure function, no
+// old (handoff §3.3: "if time since the most recent snapshot ≥ the period → create one"). Pure function, no
 // I/O — the RED/GREEN target for the time-wheel's "which cadences fire"
 // half.
 func computeDueTypes(now time.Time, last map[string]time.Time) []string {
@@ -481,8 +481,8 @@ func clampKeep(v, def int) int {
 
 // clampPauseThreshold defensively clamps PauseThresholdPct read from a
 // stored policy to DefaultPauseThresholdPct when it's <= 0 or > 100
-// (task-B3 brief / B2 review note: "PUT policy 是全量替换语义;
-// pause_threshold_pct 在 enabled=false 时可能落库越界值").
+// (task-B3 brief / B2 review note: "PUT policy is full-replace semantics;
+// pause_threshold_pct can end up stored out-of-range when enabled=false").
 func clampPauseThreshold(v int) int {
 	if v <= 0 || v > 100 {
 		return DefaultPauseThresholdPct
@@ -496,9 +496,9 @@ func clampPauseThreshold(v int) int {
 //   - auto-hourly/auto-daily/auto-weekly: keep the newest
 //     HourlyKeep/DailyKeep/WeeklyKeep (clamped — see clampKeep) per type;
 //     everything older within that same type is a victim. Types are
-//     never mixed (handoff: "只删对应 type 的").
+//     never mixed (handoff: "only delete matching type").
 //   - preop: a victim once its ProtectUntil has passed, regardless of any
-//     keep count (handoff: "preop 按 protect_until 到期清").
+//     keep count (handoff: "preop is cleaned up once protect_until expires").
 //   - manual (and unknown): never a victim — not present in the keep-N
 //     map at all, and TypeUnknown/TypePreop-without-ProtectUntil are
 //     likewise left alone.

@@ -12,10 +12,10 @@ import (
 // against the DB records for the same volume.
 type ReconcileDiff struct {
 	// ToInsert holds records for names present on disk but missing from the
-	// DB (handoff §3.2: "disk 有 DB 无 → 补录 unknown").
+	// DB (handoff §3.2: "on disk but not in DB → backfill as unknown").
 	ToInsert []model.Snapshot
 	// ToDelete holds DB records whose name is no longer present on disk
-	// (handoff §3.2: "DB 有 disk 无 → 删记录").
+	// (handoff §3.2: "in DB but not on disk → delete the record").
 	ToDelete []model.Snapshot
 }
 
@@ -52,7 +52,7 @@ func ComputeReconcileDiff(volumeUUID string, diskNames []string, dbRecords []mod
 // subvolume name itself: it may well be one of ours whose DB row was lost
 // (e.g. the DB was restored from an older backup). Falls back to type
 // "unknown" with the current time when the name doesn't match our naming
-// convention (handoff §3.2: "补录为 unknown").
+// convention (handoff §3.2: "backfill as unknown").
 func buildUnknownSnapshot(volumeUUID, name string) model.Snapshot {
 	rec := model.Snapshot{
 		VolumeUUID: volumeUUID,

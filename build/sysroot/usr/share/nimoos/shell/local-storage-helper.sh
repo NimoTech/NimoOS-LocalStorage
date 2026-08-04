@@ -4,15 +4,15 @@ UDEVILUmount(){
   $sudo_cmd udevil umount -f $1
 }
 
-#获磁盘的插入路径
-#param 路径 /dev/sda
+#get the plugged-in disk's device path
+#param path /dev/sda
 GetPlugInDisk() {
   fdisk -l | grep 'Disk' | grep 'sd' | awk -F , '{print substr($1,11,3)}'
 }
 
-#格式化fat32磁盘
-#param 需要格式化的目录 /dev/sda1
-#param 格式
+#format a fat32 disk
+#param directory to format /dev/sda1
+#param filesystem type
 FormatDisk() {
   if [ "$2" == "fat32" ]; then
     mkfs.vfat -F 32 $1
@@ -27,7 +27,7 @@ FormatDisk() {
   fi
 }
 
-#移除挂载点,删除已挂在的文件夹
+#unmount and remove the mounted directory
 UMountPointAndRemoveDir() {
   set -e
   DEVICE=$1
@@ -40,9 +40,9 @@ UMountPointAndRemoveDir() {
   fi
 }
 
-#添加分区只有一个分区
-#param 路径   /dev/sdb
-#param 要挂载的目录
+#add a single partition covering the whole disk
+#param path   /dev/sdb
+#param directory to mount
 AddPartition() {
   set -e
 
@@ -55,7 +55,7 @@ AddPartition() {
   partprobe $1
 }
 
-#磁盘类型
+#disk type
 GetDiskType() {
   fdisk $1 -l | grep Disklabel | awk -F: '{print $2}'
 }

@@ -12,7 +12,7 @@ type APPModel struct {
 	DBPath      string
 }
 
-// 服务配置
+// Server configuration
 type ServerModel struct {
 	USBAutoMount   string
 	EnableMergerFS string

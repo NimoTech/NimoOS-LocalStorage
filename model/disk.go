@@ -19,16 +19,16 @@ type LSBLKModel struct {
 	Size        uint64       `json:"size"`
 	FSSize      json.Number  `json:"fssize"`
 	Path        string       `json:"path"`
-	Model       string       `json:"model"` // 设备标识符
-	RM          bool         `json:"rm"`    // 是否为可移动设备
-	RO          bool         `json:"ro"`    // 是否为只读设备
+	Model       string       `json:"model"` // device identifier
+	RM          bool         `json:"rm"`    // whether the device is removable
+	RO          bool         `json:"ro"`    // whether the device is read-only
 	State       string       `json:"state"`
-	PhySec      int          `json:"phy-sec"` // 物理扇区大小
+	PhySec      int          `json:"phy-sec"` // physical sector size
 	Type        string       `json:"type"`
-	Vendor      string       `json:"vendor"`  // 供应商
-	Rev         string       `json:"rev"`     // 修订版本
-	FSAvail     json.Number  `json:"fsavail"` // 可用空间
-	FSUse       string       `json:"fsuse%"`  // 已用百分比
+	Vendor      string       `json:"vendor"`  // vendor
+	Rev         string       `json:"rev"`     // revision
+	FSAvail     json.Number  `json:"fsavail"` // available space
+	FSUse       string       `json:"fsuse%"`  // used percentage
 	MountPoint  string       `json:"mountpoint"`
 	MountPoints []string     `json:"mountpoints"`
 	Format      string       `json:"format"`
@@ -46,7 +46,7 @@ type LSBLKModel struct {
 	Children    []LSBLKModel `json:"children"`
 	SubSystems  string       `json:"subsystems"`
 	Label       string       `json:"label"`
-	// 详情特有
+	// detail-only fields
 	StartSector uint64 `json:"start_sector,omitempty"`
 	Rota        bool   `json:"rota"` // true(hhd) false(ssd)
 	DiskType    string `json:"disk_type"`
@@ -111,7 +111,7 @@ type Storages struct {
 
 type DiskStatus struct {
 	Size   uint64 `json:"size"`
-	Avail  uint64 `json:"avail"` // 可用空间
+	Avail  uint64 `json:"avail"` // available space
 	Health bool   `json:"health"`
 	Used   uint64 `json:"used"`
 }
