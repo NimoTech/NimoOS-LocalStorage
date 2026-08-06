@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/NimoTech/NimoOS-Common/external"
 	"github.com/NimoTech/NimoOS-Common/middleware"
@@ -52,7 +53,7 @@ func InitV1Router() http.Handler {
 		TokenLookupFuncs: []echo_middleware.ValuesExtractor{
 			func(c echo.Context) ([]string, error) {
 				if len(c.Request().Header.Get(echo.HeaderAuthorization)) > 0 {
-					return []string{c.Request().Header.Get(echo.HeaderAuthorization)}, nil
+					return []string{strings.TrimPrefix(c.Request().Header.Get(echo.HeaderAuthorization), "Bearer ")}, nil
 				}
 				return []string{c.QueryParam("token")}, nil
 			},
