@@ -59,3 +59,36 @@ func TestParseBlockDevices_MountPointsPlural(t *testing.T) {
 	assert.Equal(t, blkList[0].MountPoints[0], "")
 	assert.Equal(t, blkList[0].MountPoints[1], "/media/RAID_0")
 }
+
+// IsDiskSupported 是「什么块设备可以被当成用户存储盘(格式化 / 建 RAID)」的
+// 安全边界,此前一行覆盖都没有 —— 它放行的设备下游会被 mdadm 清扫。这里钉住
+// 白名单的形状:只认列出的传输方式与子系统链,其余一律拒绝。
+//
+// 尤其钉住 scsi_debug(`block:scsi:pseudo`)被拒:那是内存里的伪盘,重启即消失,
+// 当成真存储盘用会让用户建了 RAID 存了数据一重启全没。2026-07-28 的多盘测试台
+// 为了造假盘曾临时放行它,当时就明确该改动只能是**测试脚手架、不进产品**;
+// 这条断言是那个决定的守卫 —— 若将来有人把 pseudo 加进白名单,此测试即红。
+func TestIsDiskSupported(t *testing.T) {
+	cases := []struct {
+		name       string
+		tran       string
+		subSystems string
+		want       bool
+	}{
+		{"nvme 真盘", "nvme", "block:nvme:pci", true},
+		{"sata 真盘", "sata", "block:scsi:pci", true},
+		{"usb 盘", "usb", "block:scsi:usb:pci", true},
+		{"virtio 虚拟盘", "", "block:scsi:virtio:pci", true},
+		{"Hyper-V", "", "block:scsi:vmbus:acpi", true},
+		{"eMMC(pci)", "", "block:mmc:mmc_host:pci", true},
+		{"scsi_debug 内存伪盘 —— 必须拒绝", "", "block:scsi:pseudo", false},
+		{"zram 之类裸 block", "", "block", false},
+		{"未知传输方式", "fibre", "block:unknown", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := IsDiskSupported(model.LSBLKModel{Tran: c.tran, SubSystems: c.subSystems})
+			assert.Equal(t, got, c.want)
+		})
+	}
+}

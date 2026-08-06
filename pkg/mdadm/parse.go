@@ -21,7 +21,17 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 	// Regex for member disk lines:
 	// "   number  major  minor  raiddevice  state...  /dev/sdX"
 	// Fields: Number Major Minor RaidDevice State... /dev/sdX
-	memberRe := regexp.MustCompile(`^\s+(\d+)\s+\d+\s+\d+\s+\d+\s+(.+?)\s+(/dev/\S+)\s*$`)
+	//
+	// RaidDevice is `\d+|-`: a disk that holds no array slot prints `-` there.
+	// That covers two states the UI depends on — `faulty` (marked bad by
+	// `mdadm --fail`, not yet removed) and an idle `spare` — both of which mdadm
+	// lists after the slot table, e.g.
+	//
+	//     0       8        0        -      faulty   /dev/sda
+	//
+	// Requiring `\d+` here silently dropped every such line, so the frontend's
+	// replace-disk entry (gated on state == "faulty") could never appear.
+	memberRe := regexp.MustCompile(`^\s+(\d+)\s+\d+\s+\d+\s+(\d+|-)\s+(.+?)\s+(/dev/\S+)\s*$`)
 
 	// Regex for removed member lines (physically pulled disk):
 	// "   -   0   0   N   removed"
@@ -79,20 +89,27 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 		if inTable {
 			if m := memberRe.FindStringSubmatch(line); m != nil {
 				number, _ := strconv.Atoi(strings.TrimSpace(m[1]))
-				state := strings.TrimSpace(m[2])
-				path := m[3]
+				// RaidDevice is `-` for entries holding no slot (ejected faulty, idle spare).
+				slot := -1
+				if v, err := strconv.Atoi(strings.TrimSpace(m[2])); err == nil {
+					slot = v
+				}
+				state := strings.TrimSpace(m[3])
+				path := m[4]
 				detail.Members = append(detail.Members, MemberDisk{
 					Path:   path,
 					State:  state,
 					Number: number,
+					Slot:   slot,
 				})
 			} else if m := removedRe.FindStringSubmatch(line); m != nil {
-				// Physically removed disk: slot exists but device is gone
-				number, _ := strconv.Atoi(strings.TrimSpace(m[1]))
+				// Vacated slot: the slot exists but holds no device.
+				slot, _ := strconv.Atoi(strings.TrimSpace(m[1]))
 				detail.Members = append(detail.Members, MemberDisk{
 					Path:   "",
 					State:  "removed",
-					Number: number,
+					Number: slot, // legacy: this row's Number column is `-`; see MemberDisk.Number
+					Slot:   slot,
 				})
 			}
 		}

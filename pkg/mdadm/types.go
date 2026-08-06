@@ -15,9 +15,21 @@ type ArrayDetail struct {
 
 // MemberDisk represents a single disk in a RAID array
 type MemberDisk struct {
-	Path   string // e.g. /dev/sda
-	State  string // active sync, faulty, spare, rebuilding
-	Number int    // raid disk number
+	Path  string // e.g. /dev/sda
+	State string // active sync, faulty, spare, rebuilding
+	// Number is mdadm's "Number" column. Overloaded for historical reasons: on a
+	// `removed` placeholder row that column is `-`, and Number carries the array
+	// slot instead. Prefer Slot for "which slot is this".
+	Number int
+	// Slot is mdadm's "RaidDevice" column — which array slot this entry occupies,
+	// or -1 when it occupies none (`-` in that column: a `faulty` disk that has
+	// been ejected from its slot, or an idle `spare`).
+	//
+	// Consumers need this to tell "rows that make up the array" from "disks
+	// attached to the array but holding no slot". Without it a degraded 3-disk
+	// RAID 5 looks like 4 disks: the vacated slot plus the ejected faulty disk
+	// are two separate rows (2026-07-30, 实盘验收).
+	Slot int
 }
 
 // MDStatEntry holds parsed info from one array in /proc/mdstat

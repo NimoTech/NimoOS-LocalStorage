@@ -1,6 +1,7 @@
 package mdadm
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -60,6 +61,72 @@ const detailRebuilding = `/dev/md0:
        0     8        0        0      active sync   /dev/sda
        1     8       16        1      active sync   /dev/sdb
        3     8       48        2      spare rebuilding   /dev/sdd
+`
+
+// detailDegradedFaulty 是 2026-07-28 从真机 scsi_debug 测试台逐字抓下来的
+// `mdadm --detail /dev/md0` 输出(RAID 5 三成员,对 sda 打过 --fail 但未 --remove)。
+//
+// 上面两个 fixture 是手编的,漏掉了真实输出里最关键的一行:故障盘会以
+// RaidDevice 字段为 `-`(而非槽位号)的形式单独列在表格末尾。detailRebuilding
+// 甚至写着 `Failed Devices : 0` 却声称 degraded —— 现实中不会出现。手编 fixture
+// 让 memberRe 的 `\d+` 缺陷一直全绿,直到实盘验收才暴露。新增/修改这个解析器时
+// 请以真机输出为准。
+const detailDegradedFaulty = `/dev/md0:
+           Version : 1.2
+     Creation Time : Tue Jul 28 18:15:25 2026
+        Raid Level : raid5
+        Array Size : 1044480 (1020.00 MiB 1069.55 MB)
+     Used Dev Size : 522240 (510.00 MiB 534.77 MB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Tue Jul 28 18:16:17 2026
+             State : clean, degraded
+    Active Devices : 2
+   Working Devices : 2
+    Failed Devices : 1
+     Spare Devices : 0
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : NimoOS:0  (local to host NimoOS)
+              UUID : 515b480b:4e70c57a:ec793de6:6c737ef7
+            Events : 23
+
+    Number   Major   Minor   RaidDevice State
+       -       0        0        0      removed
+       1       8       16        1      active sync   /dev/sdb
+       3       8       32        2      active sync   /dev/sdc
+
+       0       8        0        -      faulty   /dev/sda
+`
+
+// detailIdleSpare 覆盖闲置热备盘:它同样把 RaidDevice 写成 `-`,和 faulty 行
+// 共用一条代码路径。格式取自 mdadm 手册与 detailDegradedFaulty 的实测行形状
+// (Number 数字、RaidDevice 为 `-`、State 后接 /dev 路径)。
+const detailIdleSpare = `/dev/md0:
+        Raid Level : raid5
+      Raid Devices : 3
+     Total Devices : 4
+
+             State : clean
+    Active Devices : 3
+   Working Devices : 4
+    Failed Devices : 0
+     Spare Devices : 1
+
+              UUID : 515b480b:4e70c57a:ec793de6:6c737ef7
+
+    Number   Major   Minor   RaidDevice State
+       0       8        0        0      active sync   /dev/sda
+       1       8       16        1      active sync   /dev/sdb
+       3       8       32        2      active sync   /dev/sdc
+
+       4       8       48        -      spare   /dev/sdd
 `
 
 const mdstatHealthy = `Personalities : [raid5] [raid6] [raid1]
@@ -130,6 +197,12 @@ func TestParseDetail_Healthy(t *testing.T) {
 	if d.Members[2].Path != "/dev/sdc" {
 		t.Errorf("Members[2].Path: got %q, want %q", d.Members[2].Path, "/dev/sdc")
 	}
+	// 健康阵列每块盘都占槽位
+	for i, m := range d.Members {
+		if m.Slot != i {
+			t.Errorf("Members[%d].Slot: got %d, want %d", i, m.Slot, i)
+		}
+	}
 }
 
 func TestParseDetail_Rebuilding(t *testing.T) {
@@ -159,6 +232,112 @@ func TestParseDetail_Rebuilding(t *testing.T) {
 	}
 	if spare.State != "spare rebuilding" {
 		t.Errorf("spare State: got %q, want %q", spare.State, "spare rebuilding")
+	}
+}
+
+// 故障盘(--fail 未 --remove)必须出现在 Members 里,且 State 为 "faulty"。
+// 前端「更换硬盘」入口的判定条件正是 state === "faulty"(New-UI
+// RaidMemberList.vue showReplace,逐字移植 Vue2 RaidTab.vue openReplaceDisk),
+// 解析器丢掉这一行 = UI 上永远换不了故障盘。
+func TestParseDetail_DegradedWithFaultyMember(t *testing.T) {
+	d, err := ParseDetail(detailDegradedFaulty)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.State != "clean, degraded" {
+		t.Errorf("State: got %q, want %q", d.State, "clean, degraded")
+	}
+	// 3 条:removed 空槽 + sdb + sdc,再加故障盘 sda = 4
+	if len(d.Members) != 4 {
+		t.Fatalf("Members count: got %d, want 4 (removed slot + sdb + sdc + faulty sda); members=%+v", len(d.Members), d.Members)
+	}
+
+	var faulty *MemberDisk
+	for i := range d.Members {
+		if d.Members[i].State == "faulty" {
+			faulty = &d.Members[i]
+		}
+	}
+	if faulty == nil {
+		t.Fatalf("no member with State==\"faulty\"; members=%+v", d.Members)
+	}
+	if faulty.Path != "/dev/sda" {
+		t.Errorf("faulty Path: got %q, want %q", faulty.Path, "/dev/sda")
+	}
+	if faulty.Number != 0 {
+		t.Errorf("faulty Number: got %d, want 0", faulty.Number)
+	}
+	// Slot = 占哪个阵列槽位,-1 = 不占。被踢出槽位的 faulty 盘必须是 -1,否则调用方
+	// 无法把"组成阵列的行"与"挂在阵列上但不占槽位的盘"分开 —— 3 盘 RAID 5 坏 1 块
+	// 会被数成 4 块盘(卡片 4 个方块却写 2/3、详情页头写 MEMBER DISKS (4))。
+	if faulty.Slot != -1 {
+		t.Errorf("faulty Slot: got %d, want -1(RaidDevice 列是 -)", faulty.Slot)
+	}
+
+	// removed 空槽仍应保留(物理拔盘场景依赖它)
+	var removed *MemberDisk
+	for i := range d.Members {
+		if d.Members[i].State == "removed" {
+			removed = &d.Members[i]
+		}
+	}
+	if removed == nil {
+		t.Fatalf("no member with State==\"removed\"; members=%+v", d.Members)
+	}
+	if removed.Path != "" {
+		t.Errorf("removed Path: got %q, want empty", removed.Path)
+	}
+	if removed.Slot != 0 {
+		t.Errorf("removed Slot: got %d, want 0", removed.Slot)
+	}
+
+	// 占槽位的两块好盘:Slot 取 RaidDevice 列(1 和 2),不是 Number 列(1 和 3)。
+	slots := map[string]int{}
+	for _, m := range d.Members {
+		if m.Path != "" && strings.HasPrefix(m.State, "active sync") {
+			slots[m.Path] = m.Slot
+		}
+	}
+	if slots["/dev/sdb"] != 1 {
+		t.Errorf("sdb Slot: got %d, want 1", slots["/dev/sdb"])
+	}
+	if slots["/dev/sdc"] != 2 {
+		t.Errorf("sdc Slot: got %d, want 2(RaidDevice 列;它的 Number 列是 3)", slots["/dev/sdc"])
+	}
+
+	// 占槽位的行数应等于阵列盘位数(3),而不是总行数(4)。
+	occupied := 0
+	for _, m := range d.Members {
+		if m.Slot >= 0 {
+			occupied++
+		}
+	}
+	if occupied != 3 {
+		t.Errorf("占槽位行数: got %d, want 3(总行数 %d)", occupied, len(d.Members))
+	}
+}
+
+// 闲置热备盘的 RaidDevice 同为 `-`,走同一条代码路径,不应被丢弃。
+func TestParseDetail_IdleSpare(t *testing.T) {
+	d, err := ParseDetail(detailIdleSpare)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(d.Members) != 4 {
+		t.Fatalf("Members count: got %d, want 4; members=%+v", len(d.Members), d.Members)
+	}
+	spare := d.Members[3]
+	if spare.Path != "/dev/sdd" {
+		t.Errorf("spare Path: got %q, want %q", spare.Path, "/dev/sdd")
+	}
+	if spare.State != "spare" {
+		t.Errorf("spare State: got %q, want %q", spare.State, "spare")
+	}
+	if spare.Number != 4 {
+		t.Errorf("spare Number: got %d, want 4", spare.Number)
+	}
+	if spare.Slot != -1 {
+		t.Errorf("spare Slot: got %d, want -1(闲置热备不占槽位)", spare.Slot)
 	}
 }
 
