@@ -29,7 +29,7 @@ func VolumesFromRAIDArrays(raids []*model.RAIDArray) []VolumeInfo {
 }
 
 // FindVolumeForPath locates which of volumes contains absPath — GET
-// /v2/snapshot/file-versions's "绝对路径 → 定位所属卷" step (handoff §3.4)
+// /v2/snapshot/file-versions's "absolute path → locate owning volume" step (handoff §3.4)
 // — matching by the longest mount-point prefix, so a volume mounted at
 // "/media/RAID" isn't mistakenly picked over one mounted at
 // "/media/RAID/nested" for a path inside the latter. Returns the matching

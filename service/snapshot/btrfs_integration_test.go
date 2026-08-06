@@ -14,7 +14,7 @@ import (
 // loopback-backed btrfs filesystem: creates a subvolume layout, snapshots
 // it, lists it, and deletes it. It requires root plus btrfs-progs and
 // losetup; environments without those skip with a clear reason instead of
-// failing, per the task brief ("无 btrfs 环境 t.Skip 并打印原因").
+// failing, per the task brief ("t.Skip with a stated reason when there's no btrfs environment").
 func TestExecRunnerIntegration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("skipping btrfs integration test: requires root (mount/losetup)")

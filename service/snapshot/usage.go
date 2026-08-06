@@ -7,7 +7,7 @@ import (
 
 // UsageProvider reports how full a volume's filesystem currently is, as a
 // percentage (0-100), for the scheduler's space guard (handoff §3.3:
-// "创建前查卷使用率"). Production is RAIDUsageProvider (usage_raid.go),
+// "check volume usage before creating"). Production is RAIDUsageProvider (usage_raid.go),
 // wrapping service/v2/raid_usage.go's cached `btrfs filesystem usage`
 // query; tests inject FakeUsageProvider (usage_fake.go).
 type UsageProvider interface {

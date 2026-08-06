@@ -27,7 +27,6 @@ type Services interface {
 	NotifySystem() external.NotifyService
 	Shares() external.ShareService
 	MessageBus() *message_bus.ClientWithResponses
-	Storage() StorageService
 	RAID() v2.RAIDService
 	Snapshot() *snapshot.Service
 	// SnapshotScheduler returns the autonomous scheduler layer (handoff
@@ -55,7 +54,6 @@ func NewService(db *gorm.DB) Services {
 		notify:       NewNotifyService(),
 		notifySystem: notifySystem,
 		shares:       sharesService,
-		storage:      NewStorageService(),
 		raid:         raidService,
 		snapshot:     snapshotService,
 	}
@@ -94,7 +92,6 @@ type store struct {
 	notify            NotifyServer
 	notifySystem      external.NotifyService
 	shares            external.ShareService
-	storage           StorageService
 	raid              v2.RAIDService
 	snapshot          *snapshot.Service
 	snapshotScheduler *snapshot.Scheduler
@@ -102,10 +99,6 @@ type store struct {
 
 func (c *store) NotifySystem() external.NotifyService {
 	return c.notifySystem
-}
-
-func (c *store) Storage() StorageService {
-	return c.storage
 }
 
 func (c *store) Gateway() external.ManagementService {

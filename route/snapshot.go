@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/NimoTech/NimoOS-Common/external"
 	"github.com/NimoTech/NimoOS-Common/model"
@@ -61,7 +62,7 @@ func InitSnapshotRouter() http.Handler {
 		TokenLookupFuncs: []echo_middleware.ValuesExtractor{
 			func(c echo.Context) ([]string, error) {
 				if len(c.Request().Header.Get(echo.HeaderAuthorization)) > 0 {
-					return []string{c.Request().Header.Get(echo.HeaderAuthorization)}, nil
+					return []string{strings.TrimPrefix(c.Request().Header.Get(echo.HeaderAuthorization), "Bearer ")}, nil
 				}
 				return []string{c.QueryParam("token")}, nil
 			},
@@ -86,7 +87,7 @@ type createSnapshotRequest struct {
 }
 
 // restoreRequest is the body for POST /v2/snapshot/restore (handoff §3.4:
-// "{volume_uuid, snapshot, path}; path=卷内相对路径"). Two optional fields
+// "{volume_uuid, snapshot, path}; path=path relative to the volume"). Two optional fields
 // extend it while staying backward compatible (both default to the
 // original behavior when omitted):
 //

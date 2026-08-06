@@ -101,8 +101,8 @@ type VolumeStatus struct {
 	// PausedReason reflects the scheduler's live space-guard state
 	// (Service.Pause) for this volume: non-empty while automatic snapshots
 	// are currently paused due to low free space, empty otherwise —
-	// including automatically once usage recovers (handoff §3.3: "恢复后
-	// 自动续").
+	// including automatically once usage recovers (handoff §3.3: "resumes
+	// automatically once recovered").
 	PausedReason string `json:"paused_reason"`
 }
 
@@ -138,7 +138,7 @@ func (s *Service) ResolveVolumeIdentity(volumes []VolumeInfo, volumeUUID string)
 
 // ResolveVolume finds volumeUUID among volumes and verifies it's usable as
 // a snapshot volume right now: btrfs, and actually mounted (handoff/B2
-// brief: "volume_uuid 必须对应真实已挂载 btrfs 卷" — for operations that
+// brief: "volume_uuid must correspond to a real, mounted btrfs volume" — for operations that
 // actually touch the filesystem: list/create/delete snapshots, and
 // enabling a policy). See ResolveVolumeIdentity for the mount-agnostic
 // variant used by reads and disabling a policy.

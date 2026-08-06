@@ -31,7 +31,7 @@ func ExecEnabledSMART(path string) ([]byte, error) {
 	return exec2.Command("smartctl", "-s", "on", path).CombinedOutput()
 }
 
-// 执行 lsblk 命令
+// Run the lsblk command
 func ExecLSBLKByPath(path string) []byte {
 	timeout := 10
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
@@ -44,7 +44,7 @@ func ExecLSBLKByPath(path string) []byte {
 	return output
 }
 
-// 执行 lsblk 命令
+// Run the lsblk command
 func ExecLSBLK() []byte {
 	timeout := 10
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)

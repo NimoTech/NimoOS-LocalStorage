@@ -10,8 +10,8 @@ import (
 // resolveWithinDir validates a caller-supplied relative path rel, once
 // joined onto base, still resolves — after following any symlinks along
 // the way — to somewhere inside base. This is restore's and file-versions'
-// path-safety boundary (handoff §3.4: "path 拼接后 filepath.Clean 必须仍在
-// 快照目录/卷挂载点内"), and defends independently against three escape
+// path-safety boundary (handoff §3.4: "after joining the path,
+// filepath.Clean must still be within the snapshot directory/volume mount point"), and defends independently against three escape
 // shapes:
 //
 //  1. an absolute path (rejected outright — rel must be relative to base);

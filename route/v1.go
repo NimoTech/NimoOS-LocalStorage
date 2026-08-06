@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/NimoTech/NimoOS-Common/external"
 	"github.com/NimoTech/NimoOS-Common/middleware"
@@ -31,7 +32,6 @@ func InitV1Router() http.Handler {
 	e.Use(echo_middleware.Recover())
 	e.Use(echo_middleware.Logger())
 
-	// r.GET("/v1/recover/:type", v1.GetRecoverStorage)
 	middleware.RegisterVersionRoute(e, "/v1/storage/version", "Local Storage", common.Version)
 
 	v1Group := e.Group("/v1")
@@ -53,7 +53,7 @@ func InitV1Router() http.Handler {
 		TokenLookupFuncs: []echo_middleware.ValuesExtractor{
 			func(c echo.Context) ([]string, error) {
 				if len(c.Request().Header.Get(echo.HeaderAuthorization)) > 0 {
-					return []string{c.Request().Header.Get(echo.HeaderAuthorization)}, nil
+					return []string{strings.TrimPrefix(c.Request().Header.Get(echo.HeaderAuthorization), "Bearer ")}, nil
 				}
 				return []string{c.QueryParam("token")}, nil
 			},
@@ -80,17 +80,6 @@ func InitV1Router() http.Handler {
 
 			v1StorageGroup.DELETE("", v1.DeleteStorage)
 			v1StorageGroup.GET("", v1.GetStorageList)
-		}
-		v1CloudGroup := v1Group.Group("/cloud")
-		v1CloudGroup.Use()
-		{
-			v1CloudGroup.GET("", v1.ListStorages)
-			v1CloudGroup.DELETE("", v1.UmountStorage)
-		}
-		v1DriverGroup := v1Group.Group("/driver")
-		v1DriverGroup.Use()
-		{
-			v1DriverGroup.GET("", v1.ListDriverInfo)
 		}
 		v1USBGroup := v1Group.Group("/usb")
 		v1USBGroup.Use()

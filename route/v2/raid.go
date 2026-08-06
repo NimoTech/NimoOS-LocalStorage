@@ -36,14 +36,19 @@ type ReplaceDiskRequest struct {
 
 // createStepNames maps step numbers to UI display text.
 // Defined here (route layer) so the service layer stays UI-agnostic.
+//
+// Each value is verbatim an i18n key that NimoOS-UI already ships translations
+// for (see its src/assets/lang/*.json), so the panel can render
+// $t(step_name) and get the user's language. Changing the wording here without
+// changing the key there would fall back to showing this English text.
 var createStepNames = map[int]string{
 	0: "",
-	1: "加载内核模块",
-	2: "清理磁盘超级块",
-	3: "创建 RAID 阵列",
-	4: "初始化文件系统",
-	5: "挂载阵列",
-	6: "保存配置",
+	1: "Load kernel modules",
+	2: "Clean disk superblocks",
+	3: "Create RAID Array",
+	4: "Initialize filesystem",
+	5: "Mount array",
+	6: "Save configuration",
 }
 
 // createStepProgress is the cumulative progress percentage when a step begins
@@ -54,11 +59,8 @@ var createStepProgress = map[int]int{
 
 func buildTaskResponse(t CreateTask) map[string]any {
 	stepName := createStepNames[t.Step]
-	if t.Step == 4 {
-		stepName = "初始化文件系统（" + t.Filesystem + "）"
-	}
 	if t.Status == "done" {
-		stepName = "完成"
+		stepName = "Done"
 	}
 	return map[string]any{
 		"task_id":         t.TaskID,

@@ -10,14 +10,14 @@ import (
 
 // MaxFileVersionsSnapshots bounds how many of a volume's most recent
 // snapshots FileVersions inspects, so a volume with a long snapshot history
-// can't turn one GET into an unbounded stat storm (handoff §3.4: "限制遍历
-// 数量(最近 60 个快照)").
+// can't turn one GET into an unbounded stat storm (handoff §3.4: "cap the
+// traversal count (most recent 60 snapshots)").
 const MaxFileVersionsSnapshots = 60
 
 // FileVersion is one row of GET /v2/snapshot/file-versions (handoff §3.4 /
 // §2.2): relPath's size/mtime as it exists in one particular snapshot.
-// Snapshots where relPath doesn't exist are omitted entirely (handoff: "不
-// 存在的快照不列"), never returned with zero values.
+// Snapshots where relPath doesn't exist are omitted entirely (handoff:
+// "don't list snapshots where it doesn't exist"), never returned with zero values.
 type FileVersion struct {
 	Snapshot string    `json:"snapshot"`
 	Size     int64     `json:"size"`

@@ -76,6 +76,10 @@ type raidService struct {
 
 // NewRAIDService creates a new RAIDService backed by the given database.
 func NewRAIDService(db *gorm.DB) RAIDService {
+	if err := mdadm.CheckSupport(); err != nil {
+		logger.Info("mdadm is unavailable at startup; RAID features will fail", zap.Error(err))
+	}
+
 	if err := checkBtrfsSupport(); err != nil {
 		logger.Info("btrfs tooling is unavailable at startup; btrfs create/usage features may fail", zap.Error(err))
 	}
@@ -294,7 +298,7 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 		_ = mdadm.Stop(device)
 		return nil, fmt.Errorf("mount %s on %s: %w", device, mountPoint, err)
 	}
-	// 取消给btrfs添加no_cow_policy的文件夹
+	// disabled: applying no_cow_policy to the btrfs directory
 	// if fs == "btrfs" {
 	// 	applyNoCoWPolicy(mountPoint)
 	// }

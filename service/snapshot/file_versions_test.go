@@ -102,7 +102,7 @@ func TestFileVersionsSkipsSnapshotsWithoutThePath(t *testing.T) {
 }
 
 // TestFileVersionsCapsAtMostRecentSixty is the explicit handoff §3.4
-// requirement: "限制遍历数量(最近 60 个快照)". This seeds 65 snapshots (all
+// requirement: "cap the traversal count (most recent 60 snapshots)". This seeds 65 snapshots (all
 // containing the file) and verifies only the 60 most recent are returned —
 // i.e. the 5 oldest are never even stat'd, let alone included.
 func TestFileVersionsCapsAtMostRecentSixty(t *testing.T) {

@@ -85,17 +85,13 @@ func init() {
 		return
 	}
 
-	// 自动检查并挂载之前保存的磁盘
+	// Automatically check and remount previously saved disks
 	service.MyService.Disk().CheckSerialDiskMount()
 
 	checkToken2_11()
 	go ensureDefaultDirectories()
 	go service.MyService.RAID().RecoverOnBoot()
 	//service.MyService.Disk().EnsureDefaultMergePoint()
-
-	// service.MountLists = make(map[string]*mountlib.MountPoint)
-	// configfile.Install()
-	// service.MyService.Storage().CheckAndMountAll()
 
 }
 
@@ -164,9 +160,6 @@ func main() {
 		"/v1/usb",
 		"/v1/disks",
 		"/v1/storage",
-		// "/v1/cloud",
-		// "/v1/recover",
-		// "/v1/driver",
 		route.V2APIPath,
 		route.V2DocPath,
 		route.V2RAIDPath,
