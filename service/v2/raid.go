@@ -521,11 +521,17 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 		raid.State = liveState
 	}
 
-	// 5. Build live member list.
+	// 5. Build live member list. One lsblk call covers every member; the
+	// per-device Identify fallback only runs if that call failed outright.
+	serials := diskid.SerialMap()
 	for _, m := range detail.Members {
 		serial := ""
 		if m.Path != "" {
-			serial = diskid.Identify(m.Path).Serial
+			if serials != nil {
+				serial = serials[m.Path]
+			} else {
+				serial = diskid.Identify(m.Path).Serial
+			}
 		}
 		status.Members = append(status.Members, MemberDiskStatus{
 			Path:   m.Path,
@@ -567,6 +573,9 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newD
 	if !isValidDevicePath(newDiskPath) {
 		return fmt.Errorf("invalid device path: %q", newDiskPath)
 	}
+	if strings.HasPrefix(newDiskPath, "/dev/md") {
+		return fmt.Errorf("new disk must be a physical disk, not an md device: %q", newDiskPath)
+	}
 	if oldDiskPath == "" && oldDiskSerial == "" {
 		return fmt.Errorf("old disk path or serial is required")
 	}
@@ -596,23 +605,48 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newD
 		}
 	}
 
-	// 4. Remove the old disk only if it is still attached (present but
+	// 4. Sweep the new disk exactly like array creation does: unmount its
+	// partitions and wipe stale partition-table / filesystem / md signatures,
+	// which otherwise survive onto the member (verified live during create).
+	// Runs before any change to the array so a refused sweep leaves it intact.
+	if err := s.prepareMemberDisk(newDiskPath); err != nil {
+		return fmt.Errorf("prepare new disk %s: %w", newDiskPath, err)
+	}
+	if err := mdadm.ZeroSuperblock(newDiskPath); err != nil {
+		logger.Info("zero-superblock on new disk failed (disk may be clean)",
+			zap.String("disk", newDiskPath), zap.Error(err))
+	}
+
+	// 5. Remove the old disk only if it is still attached (present but
 	// faulty). A pulled disk is already gone from mdadm's point of view.
-	if oldLive := findOldDiskLivePath(attached, serialByPath, oldDiskSerial, oldDiskPath); oldLive != "" {
-		if err := mdadm.RemoveDisk(raid.DevicePath, oldLive); err != nil {
-			return fmt.Errorf("remove disk %s: %w", oldLive, err)
+	matches := findOldDiskMatches(attached, serialByPath, oldDiskSerial, oldDiskPath)
+	switch {
+	case len(matches) > 1:
+		return fmt.Errorf("%d attached disks share serial %q; refusing to pick one (duplicate serials)",
+			len(matches), oldDiskSerial)
+	case len(matches) == 1:
+		old := matches[0]
+		// A serial-only match on a healthy active member almost certainly
+		// means the pulled disk's serial is duplicated by a twin. Yanking an
+		// active member needs an explicit path confirmation.
+		if strings.HasPrefix(old.State, "active") && old.Path != oldDiskPath {
+			return fmt.Errorf("disk %s matches serial %q but is an active member; refusing to remove it (duplicate serial?)",
+				old.Path, oldDiskSerial)
 		}
-	} else {
+		if err := mdadm.RemoveDisk(raid.DevicePath, old.Path); err != nil {
+			return fmt.Errorf("remove disk %s: %w", old.Path, err)
+		}
+	default:
 		logger.Info("old disk no longer attached, skipping --fail --remove",
 			zap.String("path", oldDiskPath), zap.String("serial", oldDiskSerial))
 	}
 
-	// 5. Add new disk.
+	// 6. Add new disk.
 	if err := mdadm.AddDisk(raid.DevicePath, newDiskPath); err != nil {
 		return fmt.Errorf("add disk %s: %w", newDiskPath, err)
 	}
 
-	// 6. Update member disk in DB — identify new disk, replace old entry.
+	// 7. Update member disk in DB — identify new disk, replace old entry.
 	if member := memberRowToReplace(raid.MemberDisks, oldDiskSerial, oldDiskPath); member != nil {
 		member.DiskByID = newIDs.ByID
 		member.DiskSerial = newIDs.Serial
@@ -622,7 +656,7 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newD
 		}
 	}
 
-	// 5. Update state to rebuilding.
+	// 8. Update state to rebuilding.
 	if err := s.updateRAIDState(arrayID, "rebuilding"); err != nil {
 		return fmt.Errorf("update RAID state: %w", err)
 	}
@@ -687,6 +721,13 @@ func (s *raidService) RecoverOnBoot() error {
 			ChunkKB:    512,
 		}
 		for _, m := range detail.Members {
+			// A degraded array's vacated slot is a pathless placeholder row —
+			// registering it would create a member with no identity at all,
+			// which nothing (UI missing-disk detection, replace, delete) can
+			// ever match again.
+			if m.Path == "" {
+				continue
+			}
 			ids := diskid.Identify(m.Path)
 			newArray.MemberDisks = append(newArray.MemberDisks, &model.RAIDMember{
 				DiskByID:        ids.ByID,
@@ -805,6 +846,12 @@ func waitForDevice(device string, timeout time.Duration) error {
 func mapMdadmState(mdadmState string) string {
 	lower := strings.ToLower(mdadmState)
 	switch {
+	// FAILED (too many members lost, e.g. "clean, FAILED") and broken (raid0
+	// with a missing member, mdadm >= 4.1) mean the array can no longer serve
+	// data — check before the degraded/recovering substrings so a dead array
+	// is never reported as merely degraded or, worse, active.
+	case strings.Contains(lower, "failed") || strings.Contains(lower, "broken"):
+		return "failed"
 	case strings.Contains(lower, "recovering") || strings.Contains(lower, "resyncing"):
 		return "rebuilding"
 	case strings.Contains(lower, "degraded"):
@@ -928,7 +975,9 @@ func (s *raidService) refreshMemberCaches(raid *model.RAIDArray) {
 
 const (
 	retryInterval = 30 * time.Second
-	maxRetries    = 5
+	// 10 × 30s: slow-spinning USB enclosures regularly need more than the
+	// 2.5 minutes the previous 5 attempts allowed before their disks appear.
+	maxRetries = 10
 )
 
 // startRetryWorker launches a background goroutine that periodically tries to

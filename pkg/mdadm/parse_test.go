@@ -464,3 +464,46 @@ unused devices: <none>
 		t.Fatalf("md1.Members = %v, want [sdg[1](S)]", md1.Members)
 	}
 }
+
+func TestParseDetailReshapeStatus(t *testing.T) {
+	out := `/dev/md0:
+        Raid Level : raid5
+             State : clean, reshaping
+    Reshape Status : 37% complete
+
+    Number   Major   Minor   RaidDevice State
+       0       8        0        0      active sync   /dev/sda
+`
+	d, err := ParseDetail(out)
+	if err != nil {
+		t.Fatalf("ParseDetail: %v", err)
+	}
+	if d.RebuildPct != 37 {
+		t.Errorf("RebuildPct = %v, want 37", d.RebuildPct)
+	}
+}
+
+func TestParseMDStatReshapeAndCheck(t *testing.T) {
+	out := `Personalities : [raid5] [raid1]
+md0 : active raid5 sdc[2] sdb[1] sda[0]
+      1000000 blocks level 5, 512k chunk, algorithm 2 [3/3] [UUU]
+      [======>..............]  reshape = 34.5% (345000/1000000) finish=12.3min speed=8888K/sec
+
+md1 : active raid1 sde[1] sdd[0]
+      500000 blocks [2/2] [UU]
+      [=>...................]  check =  5.0% (25000/500000) finish=9.9min speed=4444K/sec
+`
+	entries, err := ParseMDStat(out)
+	if err != nil {
+		t.Fatalf("ParseMDStat: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+	if entries[0].RebuildPct != 34.5 {
+		t.Errorf("md0 reshape pct = %v, want 34.5", entries[0].RebuildPct)
+	}
+	if entries[1].RebuildPct != 5.0 {
+		t.Errorf("md1 check pct = %v, want 5.0", entries[1].RebuildPct)
+	}
+}

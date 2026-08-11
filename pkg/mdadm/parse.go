@@ -37,8 +37,9 @@ func ParseDetail(output string) (*ArrayDetail, error) {
 	// "   -   0   0   N   removed"
 	removedRe := regexp.MustCompile(`^\s+-\s+\d+\s+\d+\s+(\d+)\s+(removed)\s*$`)
 
-	// Rebuild/resync status line: "     Rebuild Status : 45% complete" or "     Resync Status : 45% complete"
-	rebuildRe := regexp.MustCompile(`(?i)(?:rebuild|resync)\s+status\s*:\s*([\d.]+)%`)
+	// Progress line: "Rebuild Status : 45% complete" — mdadm uses the same
+	// shape for Resync, Reshape (grow) and Check (scrub) operations.
+	rebuildRe := regexp.MustCompile(`(?i)(?:rebuild|resync|reshape|check)\s+status\s*:\s*([\d.]+)%`)
 
 	inTable := false
 
@@ -140,8 +141,9 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 	inactiveRe := regexp.MustCompile(`^(md\d+)\s*:\s*(inactive)\s+(.+)$`)
 	// Disk status bracket pattern: "[UUU]" or "[UU_]"
 	diskStatusRe := regexp.MustCompile(`\[([U_]+)\]`)
-	// Rebuild/recovery percentage: "recovery = 45.2%"
-	rebuildRe := regexp.MustCompile(`(?:recovery|resync)\s*=\s*([\d.]+)%`)
+	// Progress percentage: "recovery = 45.2%" — also resync, reshape (grow)
+	// and check (scrub) operations.
+	rebuildRe := regexp.MustCompile(`(?:recovery|resync|reshape|check)\s*=\s*([\d.]+)%`)
 	finishRe := regexp.MustCompile(`finish=([A-Za-z0-9.]+)`)
 	speedRe := regexp.MustCompile(`speed=([A-Za-z0-9./]+)`)
 

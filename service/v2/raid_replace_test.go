@@ -39,7 +39,7 @@ func TestAttachedMembersDropsRemovedPlaceholders(t *testing.T) {
 	}
 }
 
-func TestFindOldDiskLivePath(t *testing.T) {
+func TestFindOldDiskMatches(t *testing.T) {
 	attached := attachedMembers(degradedMembers())
 	serials := map[string]string{}
 	for _, m := range attached {
@@ -49,23 +49,67 @@ func TestFindOldDiskLivePath(t *testing.T) {
 	cases := []struct {
 		name              string
 		oldSerial, oldPath string
-		want              string
+		wantPaths         []string
 	}{
 		// The incident: pulled disk's stale path now belongs to the new disk.
 		// Serial OLD-4 is attached nowhere → must report "gone", NOT /dev/sdb.
-		{"pulled disk, stale path reused", "OLD-4", "/dev/sdb", ""},
+		{"pulled disk, stale path reused", "OLD-4", "/dev/sdb", nil},
 		// Faulty-but-present disk found by serial.
-		{"present disk by serial", "OLD-2", "", "/dev/sdc"},
+		{"present disk by serial", "OLD-2", "", []string{"/dev/sdc"}},
 		// Serial wins over a contradictory path.
-		{"serial wins over path", "OLD-2", "/dev/sda", "/dev/sdc"},
+		{"serial wins over path", "OLD-2", "/dev/sda", []string{"/dev/sdc"}},
 		// Legacy client, path only: trusted only when attached.
-		{"legacy path attached", "", "/dev/sda", "/dev/sda"},
-		{"legacy path not attached", "", "/dev/sdb", ""},
+		{"legacy path attached", "", "/dev/sda", []string{"/dev/sda"}},
+		{"legacy path not attached", "", "/dev/sdb", nil},
 	}
 	for _, c := range cases {
-		if got := findOldDiskLivePath(attached, serials, c.oldSerial, c.oldPath); got != c.want {
-			t.Errorf("%s: findOldDiskLivePath(serial=%q, path=%q) = %q, want %q",
-				c.name, c.oldSerial, c.oldPath, got, c.want)
+		got := findOldDiskMatches(attached, serials, c.oldSerial, c.oldPath)
+		var gotPaths []string
+		for _, m := range got {
+			gotPaths = append(gotPaths, m.Path)
+		}
+		if len(gotPaths) != len(c.wantPaths) {
+			t.Errorf("%s: got %v, want %v", c.name, gotPaths, c.wantPaths)
+			continue
+		}
+		for i := range gotPaths {
+			if gotPaths[i] != c.wantPaths[i] {
+				t.Errorf("%s: got %v, want %v", c.name, gotPaths, c.wantPaths)
+			}
+		}
+	}
+}
+
+func TestFindOldDiskMatchesDuplicateSerials(t *testing.T) {
+	// Cheap USB bridges report one fake serial for every disk: the pulled
+	// disk's serial also belongs to a healthy attached twin. All matches must
+	// surface so the caller can refuse to guess.
+	attached := []mdadm.MemberDisk{
+		{Path: "/dev/sdd", State: "active sync", Slot: 0},
+		{Path: "/dev/sdc", State: "active sync", Slot: 1},
+	}
+	serials := map[string]string{"/dev/sdd": "DUP", "/dev/sdc": "DUP"}
+	if got := findOldDiskMatches(attached, serials, "DUP", ""); len(got) != 2 {
+		t.Errorf("expected both duplicate-serial members, got %v", got)
+	}
+}
+
+func TestMapMdadmState(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"clean", "active"},
+		{"active", "active"},
+		{"clean, degraded", "degraded"},
+		{"clean, degraded, recovering", "rebuilding"},
+		{"active, resyncing", "rebuilding"},
+		// A dead array must never read as active or merely degraded.
+		{"clean, FAILED", "failed"},
+		{"clean, degraded, FAILED", "failed"},
+		{"broken", "failed"},
+		{"inactive", "failed"},
+	}
+	for _, c := range cases {
+		if got := mapMdadmState(c.in); got != c.want {
+			t.Errorf("mapMdadmState(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

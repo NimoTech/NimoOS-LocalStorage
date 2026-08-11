@@ -110,7 +110,7 @@ func GetDiskList(ctx echo.Context) error {
 
 		if systemDisk == nil {
 			// go 5 level deep to look for system block device by mount point being "/"
-			systemDisk := service.WalkDisk(currentDisk, 5, func(blk model1.LSBLKModel) bool { return blk.MountPoint == "/" })
+			systemDisk = service.WalkDisk(currentDisk, 5, func(blk model1.LSBLKModel) bool { return blk.MountPoint == "/" })
 
 			if systemDisk != nil {
 				disk.Model = "System"
@@ -139,7 +139,14 @@ func GetDiskList(ctx echo.Context) error {
 		}
 
 		isAvail := true
-		if len(currentDisk.MountPoint) != 0 {
+		if hasRaidDescendant(currentDisk) {
+			// Claimed by an md array — active or not. Members of an array
+			// that merely isn't mounted yet (still assembling, retrying
+			// after boot, inactive) have no mount point of their own, but
+			// offering them as free disks lets the create flow stop that
+			// array and wipe them.
+			isAvail = false
+		} else if len(currentDisk.MountPoint) != 0 {
 			isAvail = false
 		} else {
 			for _, v := range currentDisk.Children {
@@ -255,4 +262,19 @@ func GetDiskSize(ctx echo.Context) error {
 		"used": p.Used,
 	}
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: data})
+}
+
+// hasRaidDescendant reports whether the disk (or any of its partitions) is
+// claimed by an md array — active or not. Extracted as a pure function so the
+// avail-list rule can be unit-tested without real hardware.
+func hasRaidDescendant(dev model1.LSBLKModel) bool {
+	for _, c := range dev.Children {
+		if strings.HasPrefix(c.Type, "raid") || strings.HasPrefix(c.Name, "md") {
+			return true
+		}
+		if hasRaidDescendant(c) {
+			return true
+		}
+	}
+	return false
 }

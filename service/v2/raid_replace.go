@@ -18,28 +18,33 @@ func attachedMembers(members []mdadm.MemberDisk) []mdadm.MemberDisk {
 	return out
 }
 
-// findOldDiskLivePath returns the current device path of the disk being
-// replaced, or "" when it is no longer attached to the array.
+// findOldDiskMatches returns every attached member matching the disk being
+// replaced — empty when it is no longer attached to the array.
 //
 // Device letters are reused after hot swaps: the stored path of a pulled disk
 // may now belong to the brand-new replacement disk. So a serial always wins
 // over a path, and a bare path is only trusted while it is still an attached
 // member — never resolved via os.Stat, which would happily hit the new disk.
-func findOldDiskLivePath(attached []mdadm.MemberDisk, serialByPath map[string]string, oldSerial, oldPath string) string {
+//
+// Serials are not guaranteed unique (cheap USB-SATA bridges report one fake
+// serial for every disk, cloned VM disks share theirs), so all matches are
+// returned and the caller must refuse to act on an ambiguous result.
+func findOldDiskMatches(attached []mdadm.MemberDisk, serialByPath map[string]string, oldSerial, oldPath string) []mdadm.MemberDisk {
 	if oldSerial != "" {
+		var out []mdadm.MemberDisk
 		for _, m := range attached {
 			if serialByPath[m.Path] == oldSerial {
-				return m.Path
+				out = append(out, m)
 			}
 		}
-		return ""
+		return out
 	}
 	for _, m := range attached {
 		if m.Path == oldPath {
-			return oldPath
+			return []mdadm.MemberDisk{m}
 		}
 	}
-	return ""
+	return nil
 }
 
 // memberRowToReplace picks the DB member row to rewrite with the new disk's

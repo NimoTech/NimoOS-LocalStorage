@@ -51,14 +51,71 @@ func Resolve(ids DiskIdentifiers) (string, bool) {
 		}
 	}
 
-	// 3. Try cached device path
+	// 3. Try cached device path — but never blindly: device letters get
+	// reused after hot swaps, so the disk sitting at the cached path may be a
+	// completely different one. When we have a stored identifier the disk at
+	// the cached path must present it; failing that the disk is treated as
+	// gone. Callers zero superblocks on the resolved path (DeleteRAIDArray),
+	// so a false positive here destroys an innocent disk.
 	if ids.DevicePath != "" {
 		if _, err := os.Stat(ids.DevicePath); err == nil {
-			return ids.DevicePath, true
+			if matchesStoredIdentity(ids, Identify(ids.DevicePath)) {
+				return ids.DevicePath, true
+			}
 		}
 	}
 
 	return "", false
+}
+
+// matchesStoredIdentity reports whether the disk currently at a cached path
+// (identified as `current`) is the disk the stored identifiers describe.
+// With no stored identifier at all the cached path is the only identity we
+// ever had, so it is accepted as-is.
+func matchesStoredIdentity(stored, current DiskIdentifiers) bool {
+	if stored.ByID == "" && stored.Serial == "" {
+		return true
+	}
+	if stored.ByID != "" && current.ByID == stored.ByID {
+		return true
+	}
+	if stored.Serial != "" && current.Serial == stored.Serial {
+		return true
+	}
+	return false
+}
+
+// SerialMap returns the serial of every top-level block device in a single
+// lsblk call, keyed by device path (e.g. "/dev/sda"). Returns nil when lsblk
+// fails; callers should then fall back to per-device Identify.
+func SerialMap() map[string]string {
+	out, err := exec.Command("lsblk", "-d", "-o", "NAME,SERIAL", "-n", "-J").Output()
+	if err != nil {
+		return nil
+	}
+	return parseSerialMapJSON(out)
+}
+
+// parseSerialMapJSON is the pure parsing half of SerialMap.
+func parseSerialMapJSON(data []byte) map[string]string {
+	var output struct {
+		Blockdevices []struct {
+			Name   string  `json:"name"`
+			Serial *string `json:"serial"`
+		} `json:"blockdevices"`
+	}
+	if err := json.Unmarshal(data, &output); err != nil {
+		return nil
+	}
+	result := make(map[string]string, len(output.Blockdevices))
+	for _, dev := range output.Blockdevices {
+		serial := ""
+		if dev.Serial != nil {
+			serial = *dev.Serial
+		}
+		result["/dev/"+dev.Name] = serial
+	}
+	return result
 }
 
 // findByIDIn scans dir for a symlink pointing to devicePath.
