@@ -59,6 +59,8 @@ github.com/Max-Sum/base32768 v0.0.0-20230304063302-18e6ce5945fd/go.mod h1:C8yoIf
 github.com/Microsoft/go-winio v0.5.2/go.mod h1:WpS1mjBmmwHBEWmogvA2mj8546UReBk4v8QkMxJ6pZY=
 github.com/Microsoft/go-winio v0.6.1 h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migciow=
 github.com/Microsoft/go-winio v0.6.1/go.mod h1:LRdKpFKfdobln8UmuiYcKPot9D2v6svN5+sAH+4kjUM=
+github.com/NimoTech/NimoOS-Common v1.9.4-alpha2 h1:pHnrtaEUVi8D5q8gs0ng0a/4A/J17mablo/d1pDgAe8=
+github.com/NimoTech/NimoOS-Common v1.9.4-alpha2/go.mod h1:7bG+q+sg4pf25un8pVQlAnXFLtsQZxvkjNRKTKWLs2A=
 github.com/RaveNoX/go-jsoncommentstrip v1.0.0/go.mod h1:78ihd09MekBnJnxpICcwzCMzGrKSKYe4AqU6PDYYpjk=
 github.com/Unknwon/goconfig v1.0.0 h1:9IAu/BYbSLQi8puFjUQApZTxIHqSwrj5d8vpP8vTq4A=
 github.com/Unknwon/goconfig v1.0.0/go.mod h1:wngxua9XCNjvHjDiTiV26DaKDT+0c63QR6H5hjVUUxw=
