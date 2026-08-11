@@ -36,7 +36,7 @@ func (f *fakeRAIDService) EnsureFilesystemResized(uint) error         { panic("n
 func (f *fakeRAIDService) ListRAIDArrays() ([]*svcmodel.RAIDArray, error) {
 	return f.arrays, f.err
 }
-func (f *fakeRAIDService) ReplaceDisk(uint, string, string) error { panic("not implemented") }
+func (f *fakeRAIDService) ReplaceDisk(uint, string, string, string) error { panic("not implemented") }
 func (f *fakeRAIDService) RecoverOnBoot() error                   { panic("not implemented") }
 func (f *fakeRAIDService) Recover(uint) (string, error)           { panic("not implemented") }
 

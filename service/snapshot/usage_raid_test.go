@@ -38,7 +38,7 @@ func (s *stubRAIDService) GetRAIDStatus(uint) (*v2.RAIDStatus, error) {
 func (s *stubRAIDService) EnsureFilesystemResized(uint) error {
 	panic("not used by RAIDUsageProvider")
 }
-func (s *stubRAIDService) ReplaceDisk(uint, string, string) error {
+func (s *stubRAIDService) ReplaceDisk(uint, string, string, string) error {
 	panic("not used by RAIDUsageProvider")
 }
 func (s *stubRAIDService) RecoverOnBoot() error         { panic("not used by RAIDUsageProvider") }

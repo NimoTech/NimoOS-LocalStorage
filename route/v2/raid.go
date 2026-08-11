@@ -30,8 +30,11 @@ type CreateRAIDRequest struct {
 }
 
 type ReplaceDiskRequest struct {
-	OldDiskPath string `json:"old_disk_path"`
-	NewDiskPath string `json:"new_disk_path"`
+	// OldDiskPath alone is unreliable after a hot swap (device letters get
+	// reused); clients that know the pulled disk's serial send it instead.
+	OldDiskPath   string `json:"old_disk_path"`
+	OldDiskSerial string `json:"old_disk_serial"`
+	NewDiskPath   string `json:"new_disk_path"`
 }
 
 // createStepNames maps step numbers to UI display text.
@@ -277,11 +280,11 @@ func ReplaceDisk(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS), Data: err.Error()})
 	}
 
-	if len(req.OldDiskPath) == 0 || len(req.NewDiskPath) == 0 {
+	if len(req.NewDiskPath) == 0 || (len(req.OldDiskPath) == 0 && len(req.OldDiskSerial) == 0) {
 		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
 	}
 
-	if err := service.MyService.RAID().ReplaceDisk(uint(id), req.OldDiskPath, req.NewDiskPath); err != nil {
+	if err := service.MyService.RAID().ReplaceDisk(uint(id), req.OldDiskPath, req.OldDiskSerial, req.NewDiskPath); err != nil {
 		logger.Error("error when replacing disk in RAID array", zap.Error(err), zap.Uint64("id", id))
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
 	}

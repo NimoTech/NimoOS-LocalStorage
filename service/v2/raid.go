@@ -29,7 +29,7 @@ type RAIDService interface {
 	GetRAIDUsage(id uint) (*RAIDUsage, error)
 	EnsureFilesystemResized(id uint) error
 	ListRAIDArrays() ([]*model.RAIDArray, error)
-	ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string) error
+	ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newDiskPath string) error
 	RecoverOnBoot() error
 	Recover(id uint) (string, error)
 }
@@ -51,6 +51,10 @@ type RAIDStatus struct {
 type MemberDiskStatus struct {
 	Path   string `json:"path"`
 	State  string `json:"state"`
+	// Serial identifies the disk independently of its device path, which can
+	// be reused by a different disk after a hot swap. Empty for placeholder
+	// rows (removed disks) or when the serial cannot be read.
+	Serial string `json:"serial,omitempty"`
 	Number int    `json:"number"`
 	// Slot is the array slot this entry occupies, or -1 for none (ejected faulty
 	// disk / idle spare). Clients need it to count array slots rather than rows:
@@ -519,9 +523,14 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 
 	// 5. Build live member list.
 	for _, m := range detail.Members {
+		serial := ""
+		if m.Path != "" {
+			serial = diskid.Identify(m.Path).Serial
+		}
 		status.Members = append(status.Members, MemberDiskStatus{
 			Path:   m.Path,
 			State:  m.State,
+			Serial: serial,
 			Number: m.Number,
 			Slot:   m.Slot,
 		})
@@ -547,13 +556,19 @@ func (s *raidService) ListRAIDArrays() ([]*model.RAIDArray, error) {
 // ReplaceDisk replaces a failed disk in a RAID array with a new one.
 // ---------------------------------------------------------------------------
 
-func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string) error {
-	// 0. Validate device paths.
-	if !isValidDevicePath(oldDiskPath) {
+func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newDiskPath string) error {
+	// 0. Validate input. The old disk may be identified by serial alone —
+	// after a hot swap its stored device path may already belong to the
+	// replacement disk (device letters get reused), so the path is optional
+	// and never trusted on its own when a serial is available.
+	if oldDiskPath != "" && !isValidDevicePath(oldDiskPath) {
 		return fmt.Errorf("invalid device path: %q", oldDiskPath)
 	}
 	if !isValidDevicePath(newDiskPath) {
 		return fmt.Errorf("invalid device path: %q", newDiskPath)
+	}
+	if oldDiskPath == "" && oldDiskSerial == "" {
+		return fmt.Errorf("old disk path or serial is required")
 	}
 
 	// 1. Get RAID from DB.
@@ -562,33 +577,48 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, newDiskPath string)
 		return fmt.Errorf("get RAID array: %w", err)
 	}
 
-	// 2. Remove old disk.
-	// Skip --fail --remove if the disk is no longer present on the system
-	// (physically pulled out); mdadm already considers it removed.
-	if _, statErr := os.Stat(oldDiskPath); statErr == nil {
-		if err := mdadm.RemoveDisk(raid.DevicePath, oldDiskPath); err != nil {
-			return fmt.Errorf("remove disk %s: %w", oldDiskPath, err)
-		}
-	} else {
-		logger.Info("old disk not present, skipping --fail --remove", zap.String("disk", oldDiskPath))
+	// 2. Establish what is actually attached to the array right now.
+	detail, err := mdadm.Detail(raid.DevicePath)
+	if err != nil {
+		return fmt.Errorf("mdadm detail %s: %w", raid.DevicePath, err)
+	}
+	attached := attachedMembers(detail.Members)
+	serialByPath := make(map[string]string, len(attached))
+	for _, m := range attached {
+		serialByPath[m.Path] = diskid.Identify(m.Path).Serial
 	}
 
-	// 3. Add new disk.
+	// 3. Refuse to touch a disk that is already an array member as "new".
+	newIDs := diskid.Identify(newDiskPath)
+	for _, m := range attached {
+		if m.Path == newDiskPath || (newIDs.Serial != "" && serialByPath[m.Path] == newIDs.Serial) {
+			return fmt.Errorf("disk %s is already a member of the array", newDiskPath)
+		}
+	}
+
+	// 4. Remove the old disk only if it is still attached (present but
+	// faulty). A pulled disk is already gone from mdadm's point of view.
+	if oldLive := findOldDiskLivePath(attached, serialByPath, oldDiskSerial, oldDiskPath); oldLive != "" {
+		if err := mdadm.RemoveDisk(raid.DevicePath, oldLive); err != nil {
+			return fmt.Errorf("remove disk %s: %w", oldLive, err)
+		}
+	} else {
+		logger.Info("old disk no longer attached, skipping --fail --remove",
+			zap.String("path", oldDiskPath), zap.String("serial", oldDiskSerial))
+	}
+
+	// 5. Add new disk.
 	if err := mdadm.AddDisk(raid.DevicePath, newDiskPath); err != nil {
 		return fmt.Errorf("add disk %s: %w", newDiskPath, err)
 	}
 
-	// 4. Update member disk in DB — identify new disk, replace old entry.
-	for _, member := range raid.MemberDisks {
-		if member.DevicePathCache == oldDiskPath {
-			ids := diskid.Identify(newDiskPath)
-			member.DiskByID = ids.ByID
-			member.DiskSerial = ids.Serial
-			member.DevicePathCache = ids.DevicePath
-			if err := s.db.Save(member).Error; err != nil {
-				return fmt.Errorf("update member disk in db: %w", err)
-			}
-			break
+	// 6. Update member disk in DB — identify new disk, replace old entry.
+	if member := memberRowToReplace(raid.MemberDisks, oldDiskSerial, oldDiskPath); member != nil {
+		member.DiskByID = newIDs.ByID
+		member.DiskSerial = newIDs.Serial
+		member.DevicePathCache = newIDs.DevicePath
+		if err := s.db.Save(member).Error; err != nil {
+			return fmt.Errorf("update member disk in db: %w", err)
 		}
 	}
 
