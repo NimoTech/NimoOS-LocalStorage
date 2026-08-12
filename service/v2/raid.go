@@ -719,6 +719,19 @@ func (s *raidService) RecoverOnBoot() error {
 			continue
 		}
 
+		// Register only arrays that actually run here. udev assembles any
+		// hot-plugged disk with a superblock into an inactive md (e.g. one
+		// leftover disk of a foreign 4-disk array) — registering that
+		// creates a phantom array that can never start, and marks the disk
+		// a protected member, blocking the residue-wipe flow that would let
+		// the user reuse it. A complete array moved from another machine
+		// assembles *active* (possibly degraded) and still registers.
+		if strings.Contains(strings.ToLower(detail.State), "inactive") {
+			logger.Info("skipping auto-registration of inactive array (foreign leftover?)",
+				zap.String("device", device), zap.String("name", detail.Name), zap.String("state", detail.State))
+			continue
+		}
+
 		arrayName := parseMdadmName(detail.Name, uuid)
 		mountPoint := fmt.Sprintf("/media/RAID_%s", arrayName)
 		filesystem, fsErr := detectFilesystemByDevice(device)
