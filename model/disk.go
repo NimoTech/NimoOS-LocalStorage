@@ -63,16 +63,41 @@ type Drive struct {
 	DiskType       string         `json:"disk_type"`
 	NeedFormat     bool           `json:"need_format"`
 	Serial         string         `json:"serial"`
+	DiskByID       string         `json:"disk_by_id,omitempty"` // /dev/disk/by-id entry name
 	Path           string         `json:"path"`
 	ChildrenNumber int            `json:"children_number"`
 	Children       []DiskChildren `json:"children"`
 	Supported      bool           `json:"supported"`
+	// Raid describes this disk's relationship to md RAID, if any: an active
+	// or registered member (protected — never offered as a free disk) or a
+	// leftover superblock of a foreign array (usable after an explicit wipe
+	// confirmation). nil for disks with no RAID trace.
+	Raid *DriveRaidInfo `json:"raid,omitempty"`
 }
+
+// DriveRaidInfo is the UI-facing summary of a disk's md superblock state.
+type DriveRaidInfo struct {
+	// Role is "member" (part of an array this system runs or has registered)
+	// or "residue" (superblock of a foreign/abandoned array).
+	Role       string `json:"role"`
+	ArrayName  string `json:"array_name"`
+	ArrayUUID  string `json:"array_uuid,omitempty"`
+	Level      string `json:"level,omitempty"`      // e.g. raid10
+	MdDevice   string `json:"md_device,omitempty"`  // /dev/mdX when attached to one
+	Registered bool   `json:"registered"`           // known to this system's DB
+	Active     bool   `json:"active"`               // md device currently running
+	CreatedAt  string `json:"created_at,omitempty"` // superblock creation time (residue)
+	UpdatedAt  string `json:"updated_at,omitempty"` // last superblock update (residue)
+}
+
 type DiskChildren struct {
-	Name      string `json:"name"`
-	Size      uint64 `json:"size"`
-	Format    string `json:"format"`
-	Supported bool   `json:"supported"`
+	Name       string `json:"name"`
+	Size       uint64 `json:"size"`
+	Format     string `json:"format"`
+	Supported  bool   `json:"supported"`
+	MountPoint string `json:"mount_point,omitempty"`
+	// UsedBytes is filled from statfs for mounted partitions; 0 otherwise.
+	UsedBytes uint64 `json:"used_bytes,omitempty"`
 }
 
 type USBDriveStatus struct {

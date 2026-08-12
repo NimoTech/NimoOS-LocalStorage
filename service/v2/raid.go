@@ -23,13 +23,13 @@ import (
 
 // RAIDService manages RAID array lifecycle.
 type RAIDService interface {
-	CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string, onStep func(int)) (*model.RAIDArray, error)
+	CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string, wipeResidue bool, onStep func(int)) (*model.RAIDArray, error)
 	DeleteRAIDArray(id uint) error
 	GetRAIDStatus(id uint) (*RAIDStatus, error)
 	GetRAIDUsage(id uint) (*RAIDUsage, error)
 	EnsureFilesystemResized(id uint) error
 	ListRAIDArrays() ([]*model.RAIDArray, error)
-	ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newDiskPath string) error
+	ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newDiskPath string, wipeResidue bool) error
 	RecoverOnBoot() error
 	Recover(id uint) (string, error)
 }
@@ -184,7 +184,7 @@ func minDisks(level int) (int, error) {
 // CreateRAIDArray creates a new software RAID array.
 // ---------------------------------------------------------------------------
 
-func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string, onStep func(int)) (*model.RAIDArray, error) {
+func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string, chunkKB int, filesystem string, wipeResidue bool, onStep func(int)) (*model.RAIDArray, error) {
 	step := func(n int) {
 		if onStep != nil {
 			onStep(n)
@@ -238,6 +238,15 @@ func (s *raidService) CreateRAIDArray(level int, diskPaths []string, name string
 	device, err := mdadm.NextAvailableDevice()
 	if err != nil {
 		return nil, fmt.Errorf("find available md device: %w", err)
+	}
+
+	// 3.5. RAID traces on the chosen disks: members of this system's arrays
+	// are refused outright; foreign residue needs the explicit wipe flag the
+	// UI sets after its confirmation dialog.
+	for _, dp := range diskPaths {
+		if err := raidTraceGuard(dp, s.findDiskRaidTrace(dp), wipeResidue); err != nil {
+			return nil, err
+		}
 	}
 
 	step(2)
@@ -562,7 +571,7 @@ func (s *raidService) ListRAIDArrays() ([]*model.RAIDArray, error) {
 // ReplaceDisk replaces a failed disk in a RAID array with a new one.
 // ---------------------------------------------------------------------------
 
-func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newDiskPath string) error {
+func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newDiskPath string, wipeResidue bool) error {
 	// 0. Validate input. The old disk may be identified by serial alone —
 	// after a hot swap its stored device path may already belong to the
 	// replacement disk (device letters get reused), so the path is optional
@@ -578,6 +587,12 @@ func (s *raidService) ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newD
 	}
 	if oldDiskPath == "" && oldDiskSerial == "" {
 		return fmt.Errorf("old disk path or serial is required")
+	}
+
+	// 0.5. RAID traces on the new disk: another array's member is refused,
+	// foreign residue needs the explicit wipe confirmation flag.
+	if err := raidTraceGuard(newDiskPath, s.findDiskRaidTrace(newDiskPath), wipeResidue); err != nil {
+		return err
 	}
 
 	// 1. Get RAID from DB.

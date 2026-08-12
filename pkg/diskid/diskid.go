@@ -193,3 +193,9 @@ func parseSerialFromJSON(data []byte, serial string) string {
 	}
 	return ""
 }
+
+// ByID returns the /dev/disk/by-id entry name for a device path, or "" when
+// none exists. Cheaper than Identify when the serial is already known.
+func ByID(devicePath string) string {
+	return findByIDIn("/dev/disk/by-id", devicePath)
+}

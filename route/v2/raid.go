@@ -27,6 +27,9 @@ type CreateRAIDRequest struct {
 	// effort: failure to enable never fails RAID creation itself, see
 	// enableSnapshotsForNewRAID.
 	EnableSnapshots *bool `json:"enable_snapshots"`
+	// WipeRaidResidue confirms erasing foreign arrays' leftover superblocks
+	// on the chosen disks (see ReplaceDiskRequest.WipeRaidResidue).
+	WipeRaidResidue bool `json:"wipe_raid_residue"`
 }
 
 type ReplaceDiskRequest struct {
@@ -35,6 +38,10 @@ type ReplaceDiskRequest struct {
 	OldDiskPath   string `json:"old_disk_path"`
 	OldDiskSerial string `json:"old_disk_serial"`
 	NewDiskPath   string `json:"new_disk_path"`
+	// WipeRaidResidue confirms erasing a foreign array's leftover superblock
+	// on the new disk. The UI sets it after its confirmation dialog; without
+	// it the backend refuses residue-carrying disks.
+	WipeRaidResidue bool `json:"wipe_raid_residue"`
 }
 
 // createStepNames maps step numbers to UI display text.
@@ -169,7 +176,7 @@ func CreateRAIDArray(ctx echo.Context) error {
 
 	go func() {
 		result, err := service.MyService.RAID().CreateRAIDArray(
-			req.Level, req.DiskPaths, req.Name, req.ChunkKB, fs, onStep,
+			req.Level, req.DiskPaths, req.Name, req.ChunkKB, fs, req.WipeRaidResidue, onStep,
 		)
 		t, ok := loadTask(taskID)
 		if !ok {
@@ -284,7 +291,7 @@ func ReplaceDisk(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
 	}
 
-	if err := service.MyService.RAID().ReplaceDisk(uint(id), req.OldDiskPath, req.OldDiskSerial, req.NewDiskPath); err != nil {
+	if err := service.MyService.RAID().ReplaceDisk(uint(id), req.OldDiskPath, req.OldDiskSerial, req.NewDiskPath, req.WipeRaidResidue); err != nil {
 		logger.Error("error when replacing disk in RAID array", zap.Error(err), zap.Uint64("id", id))
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
 	}

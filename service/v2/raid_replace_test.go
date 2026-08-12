@@ -137,3 +137,23 @@ func TestMemberRowToReplace(t *testing.T) {
 		t.Errorf("no match: got %+v, want nil", got)
 	}
 }
+
+func TestRaidTraceGuard(t *testing.T) {
+	// Clean disk: proceed with or without the flag.
+	if err := raidTraceGuard("/dev/sdb", nil, false); err != nil {
+		t.Errorf("clean disk: %v", err)
+	}
+	// This system's array member: refused even with the wipe flag.
+	prot := &diskRaidTrace{Protected: true, ArrayName: "raid10"}
+	if err := raidTraceGuard("/dev/sdb", prot, true); err == nil {
+		t.Error("protected member must be refused even with wipe flag")
+	}
+	// Foreign residue: refused without the flag, allowed with it.
+	res := &diskRaidTrace{ArrayName: "zimaos:fc56", LastActive: "Fri Aug  7 00:29:17 2026"}
+	if err := raidTraceGuard("/dev/sdb", res, false); err == nil {
+		t.Error("residue without confirmation must be refused")
+	}
+	if err := raidTraceGuard("/dev/sdb", res, true); err != nil {
+		t.Errorf("confirmed residue wipe should proceed: %v", err)
+	}
+}

@@ -47,7 +47,7 @@ type fakeSnapshotRAIDService struct {
 
 var _ v2.RAIDService = (*fakeSnapshotRAIDService)(nil)
 
-func (f *fakeSnapshotRAIDService) CreateRAIDArray(int, []string, string, int, string, func(int)) (*svcmodel.RAIDArray, error) {
+func (f *fakeSnapshotRAIDService) CreateRAIDArray(int, []string, string, int, string, bool, func(int)) (*svcmodel.RAIDArray, error) {
 	return f.result, f.err
 }
 func (f *fakeSnapshotRAIDService) DeleteRAIDArray(uint) error { panic("not implemented") }
@@ -61,7 +61,7 @@ func (f *fakeSnapshotRAIDService) EnsureFilesystemResized(uint) error { panic("n
 func (f *fakeSnapshotRAIDService) ListRAIDArrays() ([]*svcmodel.RAIDArray, error) {
 	panic("not implemented")
 }
-func (f *fakeSnapshotRAIDService) ReplaceDisk(uint, string, string, string) error { panic("not implemented") }
+func (f *fakeSnapshotRAIDService) ReplaceDisk(uint, string, string, string, bool) error { panic("not implemented") }
 func (f *fakeSnapshotRAIDService) RecoverOnBoot() error                   { panic("not implemented") }
 func (f *fakeSnapshotRAIDService) Recover(uint) (string, error)           { panic("not implemented") }
 
