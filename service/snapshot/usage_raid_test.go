@@ -28,7 +28,7 @@ func (s *stubRAIDService) GetRAIDUsage(id uint) (*v2.RAIDUsage, error) {
 	return s.usage[id], nil
 }
 
-func (s *stubRAIDService) CreateRAIDArray(int, []string, string, int, string, func(int)) (*model.RAIDArray, error) {
+func (s *stubRAIDService) CreateRAIDArray(int, []string, string, int, string, bool, func(int)) (*model.RAIDArray, error) {
 	panic("not used by RAIDUsageProvider")
 }
 func (s *stubRAIDService) DeleteRAIDArray(uint) error { panic("not used by RAIDUsageProvider") }
@@ -38,7 +38,7 @@ func (s *stubRAIDService) GetRAIDStatus(uint) (*v2.RAIDStatus, error) {
 func (s *stubRAIDService) EnsureFilesystemResized(uint) error {
 	panic("not used by RAIDUsageProvider")
 }
-func (s *stubRAIDService) ReplaceDisk(uint, string, string) error {
+func (s *stubRAIDService) ReplaceDisk(uint, string, string, string, bool) error {
 	panic("not used by RAIDUsageProvider")
 }
 func (s *stubRAIDService) RecoverOnBoot() error         { panic("not used by RAIDUsageProvider") }

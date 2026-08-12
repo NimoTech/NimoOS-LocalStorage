@@ -5,13 +5,16 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/NimoTech/NimoOS-Common/model"
 	"github.com/NimoTech/NimoOS-Common/utils/common_err"
 	"github.com/NimoTech/NimoOS-Common/utils/logger"
 	"github.com/NimoTech/NimoOS-LocalStorage/common"
 	model1 "github.com/NimoTech/NimoOS-LocalStorage/model"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/diskid"
 	"github.com/NimoTech/NimoOS-LocalStorage/pkg/hwmon"
+	"github.com/NimoTech/NimoOS-LocalStorage/pkg/mdadm"
 	"github.com/NimoTech/NimoOS-LocalStorage/service"
 	"github.com/labstack/echo/v4"
 	"github.com/shirou/gopsutil/v3/disk"
@@ -54,6 +57,9 @@ func GetDiskList(ctx echo.Context) error {
 	disks := []model1.Drive{}
 	avail := []model1.Drive{}
 
+	// One snapshot of mdstat + the RAID DB for the whole listing.
+	raidLk := buildRaidLookup()
+
 	var systemDisk *model1.LSBLKModel
 
 	for _, currentDisk := range blkList {
@@ -65,10 +71,14 @@ func GetDiskList(ctx echo.Context) error {
 					supported = false
 				}
 				t := model1.DiskChildren{
-					Name:      v.Name,
-					Size:      v.Size,
-					Format:    v.FsType,
-					Supported: service.IsFormatSupported(v),
+					Name:       v.Name,
+					Size:       v.Size,
+					Format:     v.FsType,
+					Supported:  service.IsFormatSupported(v),
+					MountPoint: v.MountPoint,
+				}
+				if v.MountPoint != "" {
+					t.UsedBytes = usedBytesOf(v.MountPoint)
 				}
 				childre = append(childre, t)
 			}
@@ -110,7 +120,7 @@ func GetDiskList(ctx echo.Context) error {
 
 		if systemDisk == nil {
 			// go 5 level deep to look for system block device by mount point being "/"
-			systemDisk := service.WalkDisk(currentDisk, 5, func(blk model1.LSBLKModel) bool { return blk.MountPoint == "/" })
+			systemDisk = service.WalkDisk(currentDisk, 5, func(blk model1.LSBLKModel) bool { return blk.MountPoint == "/" })
 
 			if systemDisk != nil {
 				disk.Model = "System"
@@ -138,8 +148,18 @@ func GetDiskList(ctx echo.Context) error {
 			temp.SmartStatus.Passed = true
 		}
 
+		disk.DiskByID = diskid.ByID(currentDisk.Path)
+		disk.Raid = classifyDriveRaid(currentDisk, raidLk, mdadm.Examine)
+
 		isAvail := true
-		if len(currentDisk.MountPoint) != 0 {
+		if disk.Raid != nil && disk.Raid.Role == "member" {
+			// Member of an array this system runs or has registered — never
+			// offered as a free disk, even while that array is inactive
+			// (boot retry window). Residue of a foreign array stays in the
+			// avail list: the UI warns and requires an explicit wipe
+			// confirmation before it can be used.
+			isAvail = false
+		} else if len(currentDisk.MountPoint) != 0 {
 			isAvail = false
 		} else {
 			for _, v := range currentDisk.Children {
@@ -255,4 +275,18 @@ func GetDiskSize(ctx echo.Context) error {
 		"used": p.Used,
 	}
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: data})
+}
+
+// usedBytesOf returns the used bytes of a mounted filesystem via statfs,
+// 0 on any failure — this feeds a display field, never a decision.
+func usedBytesOf(mountPoint string) uint64 {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(mountPoint, &st); err != nil {
+		return 0
+	}
+	bsize := uint64(st.Bsize)
+	if st.Blocks < st.Bfree {
+		return 0
+	}
+	return (st.Blocks - st.Bfree) * bsize
 }
