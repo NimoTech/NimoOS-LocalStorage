@@ -246,3 +246,17 @@ func EnsureModuleLoaded(level int) error {
 	}
 	return nil
 }
+
+// ReAddDisk re-attaches a former member kicked from a running array:
+// mdadm <arrayDevice> --re-add <diskDevice>. With a write-intent bitmap the
+// kernel only syncs chunks written while the disk was away (delta resync).
+// Fails when the superblock/bitmap can no longer cover the gap — callers
+// fall back to a plain --add (full resync).
+func ReAddDisk(arrayDevice, diskDevice string) error {
+	logger.Info("mdadm re-add disk", zap.String("array", arrayDevice), zap.String("disk", diskDevice))
+	out, err := exec.Command(MdadmPath, arrayDevice, "--re-add", diskDevice).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mdadm re-add disk %s to %s: %w: %s", diskDevice, arrayDevice, err, string(out))
+	}
+	return nil
+}

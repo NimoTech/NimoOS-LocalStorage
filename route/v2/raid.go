@@ -259,7 +259,7 @@ func RecoverRAIDArray(ctx echo.Context) error {
 		})
 	}
 
-	state, err := service.MyService.RAID().Recover(uint(id))
+	state, readded, err := service.MyService.RAID().Recover(uint(id))
 	if err != nil {
 		logger.Error("error when recovering RAID array", zap.Error(err), zap.Uint64("id", id))
 		return ctx.JSON(http.StatusInternalServerError, model.Result{
@@ -267,10 +267,13 @@ func RecoverRAIDArray(ctx echo.Context) error {
 			Message: err.Error(),
 		})
 	}
+	if readded == nil {
+		readded = []string{}
+	}
 	return ctx.JSON(common_err.SUCCESS, model.Result{
 		Success: common_err.SUCCESS,
 		Message: common_err.GetMsg(common_err.SUCCESS),
-		Data:    map[string]string{"state": state},
+		Data:    map[string]any{"state": state, "readded": readded},
 	})
 }
 

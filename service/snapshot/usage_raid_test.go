@@ -42,7 +42,7 @@ func (s *stubRAIDService) ReplaceDisk(uint, string, string, string, bool) error 
 	panic("not used by RAIDUsageProvider")
 }
 func (s *stubRAIDService) RecoverOnBoot() error         { panic("not used by RAIDUsageProvider") }
-func (s *stubRAIDService) Recover(uint) (string, error) { panic("not used by RAIDUsageProvider") }
+func (s *stubRAIDService) Recover(uint) (string, []string, error) { panic("not used by RAIDUsageProvider") }
 
 var _ v2.RAIDService = (*stubRAIDService)(nil)
 

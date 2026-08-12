@@ -31,7 +31,7 @@ type RAIDService interface {
 	ListRAIDArrays() ([]*model.RAIDArray, error)
 	ReplaceDisk(arrayID uint, oldDiskPath, oldDiskSerial, newDiskPath string, wipeResidue bool) error
 	RecoverOnBoot() error
-	Recover(id uint) (string, error)
+	Recover(id uint) (string, []string, error)
 }
 
 // RAIDStatus extends the DB model with live state from mdadm.
@@ -41,10 +41,20 @@ type RAIDStatus struct {
 	RebuildPct    float64            `json:"rebuild_pct"`
 	RebuildFinish string             `json:"rebuild_finish"`
 	RebuildSpeed  string             `json:"rebuild_speed"`
+	// RebuildEtaSeconds estimates the remaining time from the rebuild's
+	// *position* advance rate across status polls. The kernel's finish=
+	// (RebuildFinish) counts only copied blocks and balloons to weeks during
+	// bitmap delta resyncs — clients should prefer this field. -1 = unknown
+	// (no rebuild, or not enough samples yet).
+	RebuildEtaSeconds int64 `json:"rebuild_eta_seconds"`
 	TotalBytes    int64              `json:"total_bytes"` // total capacity in bytes
 	UsedBytes     int64              `json:"used_bytes"`  // used capacity in bytes
 	FreeBytes     int64              `json:"free_bytes"`  // available capacity in bytes
 	Members       []MemberDiskStatus `json:"members"`
+	// Reattachable lists this array's own member disks that are present in
+	// the system but not attached (pulled from the running array and plugged
+	// back). The Recover endpoint reclaims them via mdadm --re-add.
+	Reattachable []ReattachMember `json:"reattachable_members,omitempty"`
 }
 
 // MemberDiskStatus represents the live state of a single member disk.
@@ -76,6 +86,7 @@ type raidService struct {
 	retryCancels map[uint]context.CancelFunc
 	usageMu      sync.Mutex
 	usageCache   map[uint]cachedBtrfsUsage
+	eta          *etaTracker
 }
 
 // NewRAIDService creates a new RAIDService backed by the given database.
@@ -92,6 +103,7 @@ func NewRAIDService(db *gorm.DB) RAIDService {
 		db:           db,
 		retryCancels: make(map[uint]context.CancelFunc),
 		usageCache:   make(map[uint]cachedBtrfsUsage),
+		eta:          newEtaTracker(),
 	}
 }
 
@@ -489,9 +501,10 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 	}
 
 	status := &RAIDStatus{
-		RAIDArray:  raid,
-		LiveState:  raid.State,
-		RebuildPct: -1,
+		RAIDArray:         raid,
+		LiveState:         raid.State,
+		RebuildPct:        -1,
+		RebuildEtaSeconds: -1,
 	}
 
 	// 2. Get live state from mdadm.
@@ -516,6 +529,11 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 				status.RebuildSpeed = e.RebuildSpeed
 				if e.RebuildPct >= 0 {
 					status.RebuildPct = e.RebuildPct
+				}
+				if e.RebuildPos > 0 && e.RebuildTotal > 0 {
+					status.RebuildEtaSeconds = s.eta.Observe(mdName, e.RebuildPos, e.RebuildTotal)
+				} else {
+					s.eta.Forget(mdName)
 				}
 				break
 			}
@@ -554,6 +572,13 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 	// 6. Get capacity information from df.
 	if err := getRAIDCapacity(raid.MountPoint, status); err != nil {
 		logger.Info("failed to get RAID capacity", zap.String("mount", raid.MountPoint), zap.Error(err))
+	}
+
+	// 7. Degraded array: check whether its own missing members are actually
+	// sitting in the machine, kicked but plugged back — the UI offers a
+	// one-click reclaim (Recover) for those.
+	if len(attachedMembers(detail.Members)) < detail.TotalDisks {
+		status.Reattachable = s.detachedMembers(raid.UUID, detail)
 	}
 
 	return status, nil
@@ -1093,10 +1118,10 @@ func (s *raidService) startRetryWorker(arrayID uint, arrayUUID string) {
 // Recover manually triggers reassembly and mount for a single RAID array.
 // Cancels any running retry goroutine, attempts immediately, then re-schedules
 // retry if the attempt fails.
-func (s *raidService) Recover(id uint) (string, error) {
+func (s *raidService) Recover(id uint) (string, []string, error) {
 	raid, err := s.getRAIDByID(id)
 	if err != nil {
-		return "", fmt.Errorf("get RAID: %w", err)
+		return "", nil, fmt.Errorf("get RAID: %w", err)
 	}
 
 	// Cancel existing retry goroutine for this array.
@@ -1114,7 +1139,7 @@ func (s *raidService) Recover(id uint) (string, error) {
 	if err != nil || uuidToDevice[raid.UUID] == "" {
 		_ = s.updateRAIDState(id, "retrying")
 		s.startRetryWorker(id, raid.UUID)
-		return "retrying", nil
+		return "retrying", nil, nil
 	}
 
 	device := uuidToDevice[raid.UUID]
@@ -1130,7 +1155,7 @@ func (s *raidService) Recover(id uint) (string, error) {
 		logger.Info("manual recover resolve filesystem failed", zap.String("device", device), zap.Error(err))
 		_ = s.updateRAIDState(id, "retrying")
 		s.startRetryWorker(id, raid.UUID)
-		return "retrying", nil
+		return "retrying", nil, nil
 	}
 
 	if err := mountRAIDDevice(device, raid.MountPoint, filesystem); err != nil {
@@ -1138,9 +1163,15 @@ func (s *raidService) Recover(id uint) (string, error) {
 			logger.Info("manual recover mount failed", zap.String("error", err.Error()))
 			_ = s.updateRAIDState(id, "retrying")
 			s.startRetryWorker(id, raid.UUID)
-			return "retrying", nil
+			return "retrying", nil, nil
 		}
 	}
+
+	// Reclaim kicked members that are plugged back in: a member pulled from
+	// a *running* array falls behind on events and udev won't hot re-add it,
+	// so the array stays degraded even though its own disk is present.
+	// --re-add rides the write-intent bitmap (delta resync).
+	readded := s.reattachDetachedMembers(device, raid.UUID)
 
 	var state string
 	if detail, err := mdadm.Detail(device); err == nil {
@@ -1150,5 +1181,5 @@ func (s *raidService) Recover(id uint) (string, error) {
 	}
 	_ = s.updateRAIDState(id, state)
 	go s.refreshMemberCaches(raid)
-	return state, nil
+	return state, readded, nil
 }

@@ -42,4 +42,10 @@ type MDStatEntry struct {
 	RebuildPct    float64  // -1 if not rebuilding
 	RebuildFinish string   // estimated time remaining, e.g. "95.3min"
 	RebuildSpeed  string   // rebuild speed, e.g. "88888K/sec"
+	// RebuildPos/RebuildTotal are the "(N/M)" pair of the progress line.
+	// The kernel's finish/speed only count *copied* blocks, so during a
+	// bitmap delta resync (which skips clean chunks) they are wildly wrong —
+	// the position advance rate is the only honest ETA basis. 0 when absent.
+	RebuildPos   int64
+	RebuildTotal int64
 }
