@@ -38,7 +38,7 @@ func (f *fakeRAIDService) ListRAIDArrays() ([]*svcmodel.RAIDArray, error) {
 }
 func (f *fakeRAIDService) ReplaceDisk(uint, string, string, string, bool) error { panic("not implemented") }
 func (f *fakeRAIDService) RecoverOnBoot() error                   { panic("not implemented") }
-func (f *fakeRAIDService) Recover(uint) (string, error)           { panic("not implemented") }
+func (f *fakeRAIDService) Recover(uint) (string, []string, error)           { panic("not implemented") }
 
 // fakeServices implements service.Services. It embeds the interface (nil)
 // so every method not explicitly overridden panics on a nil dereference if
