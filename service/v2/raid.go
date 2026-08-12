@@ -41,6 +41,12 @@ type RAIDStatus struct {
 	RebuildPct    float64            `json:"rebuild_pct"`
 	RebuildFinish string             `json:"rebuild_finish"`
 	RebuildSpeed  string             `json:"rebuild_speed"`
+	// RebuildEtaSeconds estimates the remaining time from the rebuild's
+	// *position* advance rate across status polls. The kernel's finish=
+	// (RebuildFinish) counts only copied blocks and balloons to weeks during
+	// bitmap delta resyncs — clients should prefer this field. -1 = unknown
+	// (no rebuild, or not enough samples yet).
+	RebuildEtaSeconds int64 `json:"rebuild_eta_seconds"`
 	TotalBytes    int64              `json:"total_bytes"` // total capacity in bytes
 	UsedBytes     int64              `json:"used_bytes"`  // used capacity in bytes
 	FreeBytes     int64              `json:"free_bytes"`  // available capacity in bytes
@@ -80,6 +86,7 @@ type raidService struct {
 	retryCancels map[uint]context.CancelFunc
 	usageMu      sync.Mutex
 	usageCache   map[uint]cachedBtrfsUsage
+	eta          *etaTracker
 }
 
 // NewRAIDService creates a new RAIDService backed by the given database.
@@ -96,6 +103,7 @@ func NewRAIDService(db *gorm.DB) RAIDService {
 		db:           db,
 		retryCancels: make(map[uint]context.CancelFunc),
 		usageCache:   make(map[uint]cachedBtrfsUsage),
+		eta:          newEtaTracker(),
 	}
 }
 
@@ -493,9 +501,10 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 	}
 
 	status := &RAIDStatus{
-		RAIDArray:  raid,
-		LiveState:  raid.State,
-		RebuildPct: -1,
+		RAIDArray:         raid,
+		LiveState:         raid.State,
+		RebuildPct:        -1,
+		RebuildEtaSeconds: -1,
 	}
 
 	// 2. Get live state from mdadm.
@@ -520,6 +529,11 @@ func (s *raidService) GetRAIDStatus(id uint) (*RAIDStatus, error) {
 				status.RebuildSpeed = e.RebuildSpeed
 				if e.RebuildPct >= 0 {
 					status.RebuildPct = e.RebuildPct
+				}
+				if e.RebuildPos > 0 && e.RebuildTotal > 0 {
+					status.RebuildEtaSeconds = s.eta.Observe(mdName, e.RebuildPos, e.RebuildTotal)
+				} else {
+					s.eta.Forget(mdName)
 				}
 				break
 			}

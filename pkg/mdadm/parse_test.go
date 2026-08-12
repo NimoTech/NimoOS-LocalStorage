@@ -507,3 +507,20 @@ md1 : active raid1 sde[1] sdd[0]
 		t.Errorf("md1 check pct = %v, want 5.0", entries[1].RebuildPct)
 	}
 }
+
+func TestParseMDStatRebuildPosition(t *testing.T) {
+	out := `Personalities : [raid10]
+md127 : active raid10 sdb[4] sdc[1] sdd[0] sda[2]
+      1953260544 blocks super 1.2 512K chunks 2 near-copies [4/2] [U_U_]
+      [======>..............]  recovery = 30.8% (300818560/976630272) finish=60970.8min speed=184K/sec
+      bitmap: 5/15 pages [20KB], 65536KB chunk
+`
+	entries, err := ParseMDStat(out)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ParseMDStat: %v, %d entries", err, len(entries))
+	}
+	e := entries[0]
+	if e.RebuildPos != 300818560 || e.RebuildTotal != 976630272 {
+		t.Errorf("pos/total = %d/%d, want 300818560/976630272", e.RebuildPos, e.RebuildTotal)
+	}
+}

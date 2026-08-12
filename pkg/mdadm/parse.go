@@ -141,9 +141,10 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 	inactiveRe := regexp.MustCompile(`^(md\d+)\s*:\s*(inactive)\s+(.+)$`)
 	// Disk status bracket pattern: "[UUU]" or "[UU_]"
 	diskStatusRe := regexp.MustCompile(`\[([U_]+)\]`)
-	// Progress percentage: "recovery = 45.2%" — also resync, reshape (grow)
-	// and check (scrub) operations.
-	rebuildRe := regexp.MustCompile(`(?:recovery|resync|reshape|check)\s*=\s*([\d.]+)%`)
+	// Progress: "recovery = 45.2% (N/M)" — also resync, reshape (grow) and
+	// check (scrub) operations. The (N/M) position pair is optional in the
+	// pattern but always printed by current kernels.
+	rebuildRe := regexp.MustCompile(`(?:recovery|resync|reshape|check)\s*=\s*([\d.]+)%(?:\s*\((\d+)/(\d+)\))?`)
 	finishRe := regexp.MustCompile(`finish=([A-Za-z0-9.]+)`)
 	speedRe := regexp.MustCompile(`speed=([A-Za-z0-9./]+)`)
 
@@ -193,6 +194,10 @@ func ParseMDStat(output string) ([]MDStatEntry, error) {
 		if rb := rebuildRe.FindStringSubmatch(line); rb != nil {
 			pct, _ := strconv.ParseFloat(rb[1], 64)
 			current.RebuildPct = pct
+			if rb[2] != "" && rb[3] != "" {
+				current.RebuildPos, _ = strconv.ParseInt(rb[2], 10, 64)
+				current.RebuildTotal, _ = strconv.ParseInt(rb[3], 10, 64)
+			}
 		}
 		if fi := finishRe.FindStringSubmatch(line); fi != nil {
 			current.RebuildFinish = fi[1]
