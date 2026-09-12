@@ -40,7 +40,20 @@ func NewService(db *gorm.DB) Services {
 	if err != nil {
 		panic(err)
 	}
+	return newService(db, gatewayManagement)
+}
 
+// NewInitService builds the service set for `nimoos-local-storage -init`, which
+// nimoos-local-storage-first.service runs Before=docker.service -- long before
+// the Gateway has written management.url. Nothing on that path talks to the
+// Gateway (it only re-mounts previously persisted disks), so the management
+// client is left nil instead of panicking on the missing address file, which
+// is what failed the unit on every boot.
+func NewInitService(db *gorm.DB) Services {
+	return newService(db, nil)
+}
+
+func newService(db *gorm.DB, gatewayManagement external.ManagementService) Services {
 	notifySystem := external.NewNotifyService(config.CommonInfo.RuntimePath)
 	sharesService := external.NewShareService(config.CommonInfo.RuntimePath)
 	raidService := v2.NewRAIDService(db)

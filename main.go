@@ -77,13 +77,16 @@ func init() {
 
 	sqliteDB := sqlite.GetGlobalDB(*dbFlag)
 
-	service.MyService = service.NewService(sqliteDB)
 	service.Cache = cache.Init()
 	if initFlag != nil && *initFlag {
+		// First-boot remount (nimoos-local-storage-first.service): the Gateway is
+		// not up yet, so build the service set without its management client.
+		service.MyService = service.NewInitService(sqliteDB)
 		service.MyService.Disk().CheckSerialDiskMount()
 		os.Exit(0)
 		return
 	}
+	service.MyService = service.NewService(sqliteDB)
 
 	// Automatically check and remount previously saved disks
 	service.MyService.Disk().CheckSerialDiskMount()
