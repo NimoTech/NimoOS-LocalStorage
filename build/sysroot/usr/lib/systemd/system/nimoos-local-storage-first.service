@@ -1,6 +1,6 @@
 [Unit]
 Before=docker.service
-Description=Hello World
+Description=NimoOS Local Storage first-boot disk remount
 
 [Service]
 ExecStart=/usr/bin/nimoos-local-storage -init
